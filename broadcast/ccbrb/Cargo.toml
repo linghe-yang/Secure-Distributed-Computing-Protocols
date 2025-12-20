@@ -7,9 +7,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-config = { package = "config", git="https://github.com/akhilsb/Secure-Distributed-Computing-Protocols.git"}
-types = { package = "types", git="https://github.com/akhilsb/Secure-Distributed-Computing-Protocols.git"}
-crypto = { package = "crypto", git="https://github.com/akhilsb/Secure-Distributed-Computing-Protocols.git"}
+config = { package = "config", git="https://github.com/linghe-yang/Secure-Distributed-Computing-Protocols.git"}
+types = { package = "types", git="https://github.com/linghe-yang/Secure-Distributed-Computing-Protocols.git"}
+crypto = { package = "crypto", git="https://github.com/linghe-yang/Secure-Distributed-Computing-Protocols.git"}
 
 consensus = { package = "consensus", path="../../consensus"}
 
