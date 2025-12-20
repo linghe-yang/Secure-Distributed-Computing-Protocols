@@ -5,13 +5,11 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use config::Node;
 
 use fnv::FnvHashMap;
-use network::{
-    plaintcp::{CancelHandler, TcpReceiver, TcpReliableSender},
-    Acknowledgement,
-};
+use network::{plaintcp::{CancelHandler, TcpReceiver, TcpReliableSender}, Acknowledgement, Message};
 use tokio::sync::{
     mpsc::{Receiver, Sender, UnboundedReceiver, unbounded_channel},
     oneshot,
@@ -129,7 +127,7 @@ impl Context {
         let sec_key_map = self.sec_key_map.clone();
         // Sleep to simulate network delay
         // sleep(Duration::from_millis(50)).await;
-
+        let mut total_bytes = 0;
         for (replica, sec_key) in sec_key_map.into_iter() {
             if self.byz && replica != self.myid {
                 let mut byz_msg = protmsg.clone();
@@ -144,17 +142,20 @@ impl Context {
                  
 
                 let wrapper_msg = WrapperMsg::new(byz_msg, self.myid, &sec_key.as_slice());
+                total_bytes += Bytes::from(wrapper_msg.to_bytes()).len();
                 let cancel_handler = self.net_send.send(replica, wrapper_msg).await;
                 self.add_cancel_handler(cancel_handler);
                 continue;
             }
             if replica != self.myid {
                 let wrapper_msg = WrapperMsg::new(protmsg.clone(), self.myid, &sec_key.as_slice());
+                total_bytes += Bytes::from(wrapper_msg.to_bytes()).len();
                 let cancel_handler: CancelHandler<Acknowledgement> =
                     self.net_send.send(replica, wrapper_msg).await;
                 self.add_cancel_handler(cancel_handler);
             }
         }
+        log::info!("Network sending bytes: {:?}", total_bytes);
     }
 
     pub fn add_cancel_handler(&mut self, canc: CancelHandler<Acknowledgement>) {
@@ -162,6 +163,7 @@ impl Context {
     }
 
     pub async fn send(&mut self, replica: Replica, wrapper_msg: WrapperMsg<ProtMsg>) {
+        log::info!("Network sending bytes: {:?}", Bytes::from(wrapper_msg.to_bytes()).len());
         let cancel_handler: CancelHandler<Acknowledgement> =
             self.net_send.send(replica, wrapper_msg).await;
         self.add_cancel_handler(cancel_handler);

@@ -1,8 +1,10 @@
+use bytes::Bytes;
 use crate::msg::SendMsg;
 use crate::Status;
 use crate::{Context, ProtMsg};
 use consensus::get_shards;
 use crypto::hash::do_hash;
+use network::Message;
 use reed_solomon_rs::fec::fec::Share;
 use types::WrapperMsg;
 
@@ -86,6 +88,7 @@ impl Context {
 
             let protmsg = ProtMsg::Init(send_msg, instance_id);
             let wrapper = WrapperMsg::new(protmsg, self.myid, &sec_key);
+            log::info!("Network sending bytes: {:?}", Bytes::from(wrapper.to_bytes()).len());
             let cancel_handler = self.net_send.send(replica, wrapper).await;
             self.add_cancel_handler(cancel_handler);
         }

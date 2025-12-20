@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use consensus::get_shards;
 use crypto::{
     aes_hash::{MerkleTree, HashState},
@@ -7,7 +8,7 @@ use types::{WrapperMsg};
 
 use crate::{Context};
 use crate::{CTRBCMsg, ProtMsg};
-use network::{plaintcp::CancelHandler, Acknowledgement};
+use network::{plaintcp::CancelHandler, Acknowledgement, Message};
 
 impl Context {
     // Dealer sending message to everybody
@@ -32,6 +33,7 @@ impl Context {
             else {
                 let protocol_msg = ProtMsg::Init(ctrbc_msg, instance_id);
                 let wrapper_msg = WrapperMsg::new(protocol_msg.clone(), self.myid, &sec_key.as_slice());
+                log::info!("Network sending bytes: {:?}", Bytes::from(wrapper_msg.to_bytes()).len());
                 let cancel_handler: CancelHandler<Acknowledgement> = self.net_send.send(replica, wrapper_msg).await;
                 self.add_cancel_handler(cancel_handler);
             }

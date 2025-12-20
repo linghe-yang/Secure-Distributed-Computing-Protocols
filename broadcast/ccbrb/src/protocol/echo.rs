@@ -3,8 +3,9 @@ use crate::msg::{EchoMsg, SendMsg};
 use crate::Status;
 use crate::{Context, ProtMsg};
 use bincode;
+use bytes::Bytes;
 use crypto::hash::{do_hash};
-use network::{plaintcp::CancelHandler, Acknowledgement};
+use network::{plaintcp::CancelHandler, Acknowledgement, Message};
 use reed_solomon_rs::fec::fec::*;
 use types::WrapperMsg;
 
@@ -104,6 +105,7 @@ impl Context {
 
                 let sec_key = &self.sec_key_map[&replica];
                 let wrapped = WrapperMsg::new(proto_msg.clone(), self.myid, sec_key);
+                log::info!("Network sending bytes: {:?}", Bytes::from(wrapped.to_bytes()).len());
                 let cancel_handler: CancelHandler<Acknowledgement> =
                     self.net_send.send(replica, wrapped).await;
                 self.add_cancel_handler(cancel_handler);
