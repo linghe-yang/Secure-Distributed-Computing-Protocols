@@ -9,7 +9,7 @@ use super::ASKSState;
 
 impl Context{
     pub async fn process_asks_echo(&mut self, ctrbc_msg: CTRBCMsg, echo_sender: Replica, reconstruct_to_all: bool, instance_id: usize){
-        log::info!("Processing ASKS ECHO from {} for instance {}", echo_sender, instance_id);
+        log::debug!("Processing ASKS ECHO from {} for instance {}", echo_sender, instance_id);
         if !self.asks_state.contains_key(&instance_id){
             let new_state = ASKSState::new(ctrbc_msg.origin, reconstruct_to_all);
             self.asks_state.insert(instance_id, new_state);
@@ -42,7 +42,7 @@ impl Context{
         
         let size = echo_senders.len().clone();
         if size == self.num_nodes - self.num_faults{
-            log::info!("Received n-f ECHO messages for ASKS Instance ID {}, sending READY message",instance_id);
+            log::debug!("Received n-f ECHO messages for ASKS Instance ID {}, sending READY message",instance_id);
             let senders = echo_senders.clone();
 
             // Reconstruct the entire Merkle tree
@@ -105,7 +105,7 @@ impl Context{
         }
         // Go for optimistic termination if all n shares have appeared
         else if size == self.num_nodes{
-            log::info!("Received n ECHO messages for ASKS Instance ID {}, terminating",instance_id);
+            log::debug!("Received n ECHO messages for ASKS Instance ID {}, terminating",instance_id);
             // Do not reconstruct the entire root again. Just send the merkle proof
             
             let echo_root = asks_state.rbc_state.echo_root.clone();

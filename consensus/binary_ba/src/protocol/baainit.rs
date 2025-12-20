@@ -18,7 +18,7 @@ impl Context{
         if self.terminated_rounds.contains(&instance_id){
             return;
         }
-        log::info!("Received ECHO1 message from node {} with content {:?} for leader round {}, baa round {}",echo_sender,msg,instance_id,baa_round);
+        log::debug!("Received ECHO1 message from node {} with content {:?} for leader round {}, baa round {}",echo_sender,msg,instance_id,baa_round);
         let val = msg.clone();
         let mut terminate = None;
         // To avoid mutable borrow
@@ -45,11 +45,11 @@ impl Context{
                         self.myid
                     );
                     if e2.is_some(){
-                        log::info!("Sending echo2 message {} for lround {},bround {}",e2.unwrap(),instance_id,baa_round);
+                        log::debug!("Sending echo2 message {} for lround {},bround {}",e2.unwrap(),instance_id,baa_round);
                         msgs_to_send.push(ProtMsg::FinBinAAEcho2(e2.unwrap(), self.myid, instance_id,baa_round));    
                     }
                     if e3.is_some(){
-                        log::info!("Sending echo3 message {} for lround {},bround {}",e3.unwrap(),instance_id,baa_round);
+                        log::debug!("Sending echo3 message {} for lround {},bround {}",e3.unwrap(),instance_id,baa_round);
                         msgs_to_send.push(ProtMsg::FinBinAAEcho3(e3.unwrap(), self.myid, instance_id,baa_round));
                     }
                 }
@@ -77,7 +77,7 @@ impl Context{
                         }
                         else{
                             let coin_share = coin_shares[baa_round].clone();
-                            log::info!("Sending coin share {:?} for lround {}, bround {}",coin_share,instance_id,baa_round);
+                            log::debug!("Sending coin share {:?} for lround {}, bround {}",coin_share,instance_id,baa_round);
                             let prot_msg = ProtMsg::BBACoin(instance_id, baa_round, coin_share, self.myid);
                             round_state.add_partial_coin(self.myid, LargeField::from_bytes_be(&coin_share).unwrap());
                             msgs_to_send.push(prot_msg);
@@ -123,7 +123,7 @@ impl Context{
         }
         let mut terminate = None;
         let mut msgs_to_send = Vec::new();
-        log::info!("Received ECHO2 message from node {} with content {:?} for lround {}, bround {}",echo2_sender,msg,instance_id,baa_round);
+        log::debug!("Received ECHO2 message from node {} with content {:?} for lround {}, bround {}",echo2_sender,msg,instance_id,baa_round);
         if self.round_state.contains_key(&instance_id){
             let baa_rnd_state_tup = self.round_state.get_mut(&instance_id).unwrap();
             if baa_rnd_state_tup.1.contains(&baa_round){
@@ -137,7 +137,7 @@ impl Context{
                 if echo3.is_some(){
                     let term = round_state.add_echo3(echo3.unwrap(), self.myid);
                     msgs_to_send.push(ProtMsg::FinBinAAEcho3(echo3.unwrap(), self.myid, instance_id,baa_round));
-                    log::info!("Sending echo3 message {} for lround {}, bround {}",echo3.unwrap(),instance_id,baa_round);
+                    log::debug!("Sending echo3 message {} for lround {}, bround {}",echo3.unwrap(),instance_id,baa_round);
                     if term && !round_state.contains_coin(self.myid) && self.coin_shares.contains_key(&instance_id){
                         // Create partial signature and broadcast
                         // Create and broadcast coin
@@ -148,7 +148,7 @@ impl Context{
                         }
                         else{
                             let coin_share = coin_shares[baa_round].clone();
-                            log::info!("Sending coin share {:?} for lround {}, bround {}",coin_share,instance_id,baa_round);
+                            log::debug!("Sending coin share {:?} for lround {}, bround {}",coin_share,instance_id,baa_round);
                             let prot_msg = ProtMsg::BBACoin(instance_id, baa_round, coin_share, self.myid);
                             round_state.add_partial_coin(self.myid, LargeField::from_bytes_be(&coin_share).unwrap());
                             msgs_to_send.push(prot_msg);
@@ -193,7 +193,7 @@ impl Context{
         }
         
         let mut terminate = None;
-        log::info!("Received ECHO3 message from node {} with content {:?} for lround {}, bround {}",echo3_sender,msg,instance_id,baa_round);
+        log::debug!("Received ECHO3 message from node {} with content {:?} for lround {}, bround {}",echo3_sender,msg,instance_id,baa_round);
         if self.round_state.contains_key(&instance_id){
             let baa_rnd_state_tup = self.round_state.get_mut(&instance_id).unwrap();
             if baa_rnd_state_tup.1.contains(&baa_round){
@@ -217,7 +217,7 @@ impl Context{
                     }
                     else{
                         let coin_share = coin_shares[baa_round].clone();
-                        log::info!("Sending coin share {:?} for lround {}, bround {}",coin_share,instance_id,baa_round);
+                        log::debug!("Sending coin share {:?} for lround {}, bround {}",coin_share,instance_id,baa_round);
                         let prot_msg = ProtMsg::BBACoin(instance_id, baa_round, coin_share, self.myid);
                         round_state.coin_shares_vec.insert(self.myid,LargeField::from_bytes_be(&coin_share).unwrap());
                         terminate = round_state.aggregate_p_coins();
@@ -258,7 +258,7 @@ impl Context{
             return;
         }
         
-        log::info!("Received partial signature message from node {} with lround {}, bround: {}",share_sender,instance_id,baa_round);
+        log::debug!("Received partial signature message from node {} with lround {}, bround: {}",share_sender,instance_id,baa_round);
         let share: LargeField = LargeField::from_bytes_be(share.as_slice()).unwrap();
         let mut terminate = None;
         if self.round_state.contains_key(&instance_id){
@@ -308,14 +308,14 @@ impl Context{
             return;
         }
         if !terminate{
-            log::info!("Received request to start new round instance_id {} bround {}",instance_id,baa_round);
+            log::debug!("Received request to start new round instance_id {} bround {}",instance_id,baa_round);
             // Restart next round with updated value
             self.broadcast(ProtMsg::FinBinAAEcho(term_val, self.myid, instance_id,baa_round)).await;
         }
         else {
             // Find target proposal that was elected
             self.terminated_rounds.insert(instance_id);
-            log::info!("Terminating BAA round {} for instance {}, broadcasting value {:?}",baa_round,instance_id,term_val);
+            log::debug!("Terminating BAA round {} for instance {}, broadcasting value {:?}",baa_round,instance_id,term_val);
             let _status = self.out_bin_ba_values.send((instance_id, term_val)).await;
             if _status.is_err(){
                 log::error!("Failed to send BAA value for instance {}",instance_id);

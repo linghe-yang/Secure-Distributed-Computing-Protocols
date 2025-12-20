@@ -20,7 +20,7 @@ impl Context {
         let f = match FEC::new(self.num_faults, self.num_nodes) {
             Ok(f) => f,
             Err(e) => {
-                log::info!("FEC initialization failed with error: {:?}", e);
+                log::debug!("FEC initialization failed with error: {:?}", e);
                 return;
             }
         };
@@ -36,14 +36,14 @@ impl Context {
                 shares[s.number] = s.clone(); // deep copy
             };
             if let Err(e) = f.encode(&msg_content, output) {
-                log::info!("Encoding failed with error: {:?}", e);
+                log::debug!("Encoding failed with error: {:?}", e);
             }
             //f.encode(&msg_content, output)?;
         }
 
         self.fragment = shares[self.myid].clone();
 
-        log::info!("Shares: {:?}", shares);
+        log::debug!("Shares: {:?}", shares);
 
         // Echo to every node the encoding corresponding to the replica id
         let sec_key_map = self.sec_key_map.clone();

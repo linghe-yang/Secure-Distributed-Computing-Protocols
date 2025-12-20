@@ -12,7 +12,7 @@ impl Context{
         if instance == 1 {
             // First instance is for the RBC of the core ACS instance
             //let replicas_list: Vec<Replica> = bincode::deserialize(value.as_slice()).unwrap();
-            log::info!("Received L1 CTRBC broadcast from party {}", broadcaster);
+            log::debug!("Received L1 CTRBC broadcast from party {}", broadcaster);
             self.acs_state.broadcast_messages.insert(broadcaster , Vec::new());
             
             if self.acs_state.broadcast_messages.len() == self.num_nodes - self.num_faults{
@@ -27,13 +27,13 @@ impl Context{
 
                 let ser_inst_id_val = bincode::serialize(&ctrbc_msg).unwrap();
 
-                log::info!("Received n-f broadcasts of the initial value, broadcasting the list of broadcasts");
+                log::debug!("Received n-f broadcasts of the initial value, broadcasting the list of broadcasts");
                 let _status = self.ctrbc_req.send(ser_inst_id_val).await;
             }
             self.check_witnesses_rbc_inst(broadcaster).await;
         }
         else if instance == 2 {
-            log::info!("Received L2 CTRBC broadcast from party {}", broadcaster);
+            log::debug!("Received L2 CTRBC broadcast from party {}", broadcaster);
             // Second RBC instance is for list of broadcasts
             let replicas_list: Vec<Replica> = bincode::deserialize(value.as_slice()).unwrap();
             self.acs_state.re_broadcast_messages.insert(broadcaster, replicas_list.clone());
@@ -43,7 +43,7 @@ impl Context{
             // Second instance RBC is for VABA instance
             let true_inst_mod = instance - 2;
             let tot_rbcs_per_vaba = 2;
-            log::info!("Received L3 CTRBC broadcast from party {} for true_inst_mod {}", broadcaster, true_inst_mod);
+            log::debug!("Received L3 CTRBC broadcast from party {} for true_inst_mod {}", broadcaster, true_inst_mod);
 
             if true_inst_mod % tot_rbcs_per_vaba == 1{
                 let vaba_index = (true_inst_mod/tot_rbcs_per_vaba) + 1;
@@ -66,7 +66,7 @@ impl Context{
             broadcast_list.remove(&broadcaster);
             if broadcast_list.len() == 0{
                 // Add party to witness list
-                log::info!("Added party {} to list of first witnesses self.acs_state.accepted_witnesses", *rep_key);
+                log::debug!("Added party {} to list of first witnesses self.acs_state.accepted_witnesses", *rep_key);
                 added_witnesses.push(*rep_key);
             }
         }
@@ -121,7 +121,7 @@ impl Context{
 
     pub async fn process_termination_event(&mut self, replica: usize){
         self.acs_input_set.insert(replica);
-        log::info!("Completed sharing process for secrets originated by {}, adding to acs_set", replica);
+        log::debug!("Completed sharing process for secrets originated by {}, adding to acs_set", replica);
         let ctrbc_msg = CTRBCInterface{
             id: 1,
             msg: Vec::new()

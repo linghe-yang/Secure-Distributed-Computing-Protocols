@@ -57,7 +57,7 @@ impl Context{
             }
         }
         else{
-            log::info!("Did not receive share from dealer of instance id {}", instance_id);
+            log::debug!("Did not receive share from dealer of instance id {}", instance_id);
             return;
         }
     }
@@ -130,7 +130,7 @@ impl Context{
                 }).collect();
                 
                 let root_comm = MerkleTree::new(all_commitments, &self.hash_context).root();
-                log::info!("Reconstructed roots in ASKS instance {} initiated by party {}", instance_id, instance_id/self.threshold);
+                log::debug!("Reconstructed roots in ASKS instance {} initiated by party {}", instance_id, instance_id/self.threshold);
                 
                 recon_commitments.push(root_comm);
                 let secret = share_poly_coeffs.evaluate(&LargeField::zero()).clone();
@@ -157,7 +157,7 @@ impl Context{
                 }
             }
             
-            log::info!("Sending back value to ACS: {:?} for ASKS instance {}", secrets,instance_id);
+            log::debug!("Sending back value to ACS: {:?} for ASKS instance {}", secrets,instance_id);
             self.terminate(instance_id, Some(secrets)).await;
         }
     }

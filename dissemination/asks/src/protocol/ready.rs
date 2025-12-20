@@ -8,7 +8,7 @@ use crate::{context::Context, protocol::ASKSState, msg::ProtMsg};
 impl Context{
 
     pub async fn process_asks_ready(&mut self, ctrbc_msg: CTRBCMsg, ready_sender: Replica, reconstruct_to_all: bool,instance_id: usize){
-        log::info!("Processing ASKS READY from {} for instance {}", ready_sender, instance_id);
+        log::debug!("Processing ASKS READY from {} for instance {}", ready_sender, instance_id);
         if !self.asks_state.contains_key(&instance_id){
             let asks_state = ASKSState::new(ctrbc_msg.origin, reconstruct_to_all);
             self.asks_state.insert(instance_id, asks_state);
@@ -115,7 +115,7 @@ impl Context{
             }
         }
         else if size >= self.num_nodes - self.num_faults && !asks_context.rbc_state.terminated {
-            log::info!("Received n-f READY messages for RBC Instance ID {}, terminating",instance_id);
+            log::debug!("Received n-f READY messages for RBC Instance ID {}, terminating",instance_id);
             // Terminate protocol
             asks_context.rbc_state.terminated = true;
             asks_context.terminated = true;
@@ -131,13 +131,13 @@ impl Context{
             // Completed sharing
             let msg = (instance, rep, None);
             let status = self.out_asks_values.send(msg).await;
-            log::info!("Sent result back to original channel {:?}", status);
+            log::debug!("Sent result back to original channel {:?}", status);
         }
         else{
             // Completed reconstruction of the secret
             let msg = (instance,rep, Some(secrets.unwrap()));
             let status = self.out_asks_values.send(msg).await;
-            log::info!("Sent result back to original channel {:?}", status);
+            log::debug!("Sent result back to original channel {:?}", status);
         }
     }
 }

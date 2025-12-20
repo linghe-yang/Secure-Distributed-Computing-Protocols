@@ -26,7 +26,7 @@ impl Context {
         //send echo
         self.start_echo(msg.content.clone()).await;
 
-        log::info!(
+        log::debug!(
             "Received Init message {:?} from node {}.",
             msg.content,
             msg.origin,

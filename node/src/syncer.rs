@@ -102,7 +102,7 @@ impl Syncer{
                 // Receive exit handlers
                 exit_val = &mut self.exit_rx => {
                     exit_val.map_err(anyhow::Error::new)?;
-                    log::info!("Termination signal received by the server. Exiting.");
+                    log::debug!("Termination signal received by the server. Exiting.");
                     break
                 },
                 msg = self.rx_net.recv() => {
@@ -124,7 +124,7 @@ impl Syncer{
                             log::debug!("Node {} started the protocol",msg.sender);
                         },
                         SyncState::COMPLETED=>{
-                            log::info!("Got COMPLETED message from node {}",msg.sender);
+                            log::debug!("Got COMPLETED message from node {}",msg.sender);
                             
                             // deserialize message
                             let rbc_msg: ProtSyncMsg = bincode::deserialize(&msg.value).expect("Unable to deserialize message received from node");
@@ -150,10 +150,10 @@ impl Syncer{
                                 vec_times.sort();
                                 
                                 if value_set.len() > 1{
-                                    log::info!("Received multiple values from nodes, broadcast failed, rerun test {:?}",value_set);
+                                    log::debug!("Received multiple values from nodes, broadcast failed, rerun test {:?}",value_set);
                                 }
                                 else{
-                                    log::info!("All n nodes completed the protocol for ID: {} with latency {:?} and value {:?}",rbc_msg.id,vec_times,value_set);
+                                    log::debug!("All n nodes completed the protocol for ID: {} with latency {:?} and value {:?}",rbc_msg.id,vec_times,value_set);
                                 }
                                 self.broadcast(SyncMsg { sender: self.num_nodes, state: SyncState::STOP, value:"Terminate".to_string().into_bytes()}).await;
                             }

@@ -179,7 +179,7 @@ impl Context {
                 // Receive exit handlers
                 exit_val = &mut self.exit_rx => {
                     exit_val.map_err(anyhow::Error::new)?;
-                    log::info!("Termination signal received by the server. Exiting.");
+                    log::debug!("Termination signal received by the server. Exiting.");
                     break
                 },
                 msg = self.net_recv.recv() => {
@@ -214,7 +214,7 @@ impl Context {
                                 .duration_since(UNIX_EPOCH)
                                 .unwrap()
                                 .as_millis());
-                            log::info!("Termination signal received by the server. Exiting.");
+                            log::debug!("Termination signal received by the server. Exiting.");
                             break
                         },
                         _=>{}

@@ -175,7 +175,7 @@ impl Context {
                 // Receive exit handlers
                 exit_val = &mut self.exit_rx => {
                     exit_val.map_err(anyhow::Error::new)?;
-                    log::info!("Termination signal received by the server. Exiting.");
+                    log::debug!("Termination signal received by the server. Exiting.");
                     break
                 },
                 msg = self.net_recv.recv() => {
@@ -190,7 +190,7 @@ impl Context {
                     let sync_msg = sync_msg.ok_or_else(||
                         anyhow!("Networking layer has closed")
                     )?;
-                    log::info!("Received request to start RBC for  Start time: {:?}", SystemTime::now()
+                    log::debug!("Received request to start RBC for  Start time: {:?}", SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
                                 .unwrap()
                                 .as_millis());

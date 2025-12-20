@@ -43,7 +43,7 @@ impl Context {
 
         let size = echo_senders.len().min(echo_senders_2.len());
         if size >= self.num_nodes - self.num_faults && avid_context.agreed_root.is_none(){
-            log::info!("Received n-f ECHO messages for RBC Instance ID {}, sending READY message",instance_id);
+            log::debug!("Received n-f ECHO messages for RBC Instance ID {}, sending READY message",instance_id);
             // ECHO phase is completed. Save our share and the root for later purposes and quick access. 
             avid_context.agreed_root = Some(avid_index.proof.root());
             if avid_context.fragments.is_some(){

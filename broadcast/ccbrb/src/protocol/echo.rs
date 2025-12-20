@@ -12,7 +12,7 @@ impl Context {
     pub async fn start_echo(&mut self, msg: SendMsg, instance_id: usize) {
         let d_hashes = msg.d_hashes.clone(); // D = [H(d1), ..., H(dn)]
         let c = do_hash(&bincode::serialize(&d_hashes).unwrap()); // c = H(D)
-                                                                  // log::info!(
+                                                                  // log::debug!(
                                                                   //     "Starting ECHO for instance_id {} with c: {:?}, d_hashes: {:?}",
                                                                   //     instance_id,
                                                                   //     c,
@@ -22,7 +22,7 @@ impl Context {
         let f = match FEC::new(self.num_faults, self.num_nodes) {
             Ok(f) => f,
             Err(e) => {
-                log::info!("FEC initialization failed with error: {:?}", e);
+                log::debug!("FEC initialization failed with error: {:?}", e);
                 return;
             }
         };
@@ -38,7 +38,7 @@ impl Context {
             let output = |s: Share| {
                 pi[s.number] = s.clone(); // deep copy
             };
-            // log::info!(
+            // log::debug!(
             //     "d_hashes before encoding: {:?}, instance_id: {}",
             //     d_hashes,
             //     instance_id
@@ -48,7 +48,7 @@ impl Context {
             let serialized_hashes = bincode::serialize(&d_hashes).unwrap();
 
             if let Err(e) = f.encode(&serialized_hashes, output) {
-                log::info!("Encoding failed with error: {:?}", e);
+                log::debug!("Encoding failed with error: {:?}", e);
             }
             //f.encode(&msg_content, output)?;
         }
@@ -60,7 +60,7 @@ impl Context {
             }
         }
 
-        // log::info!(
+        // log::debug!(
         //     "Echo: Encoded shares for instance_id {}: {:?}",
         //     instance_id,
         //     pi

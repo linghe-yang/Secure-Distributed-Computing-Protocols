@@ -35,7 +35,7 @@ impl Context{
                 }
             }
             if map.is_empty(){
-                log::info!("Validated Gather Echo, adding party {} as witness", *rep);
+                log::debug!("Validated Gather Echo, adding party {} as witness", *rep);
                 new_witnesses.push(*rep);
             }
         }
@@ -62,7 +62,7 @@ impl Context{
         }
         if gather_indices.is_empty(){
             // Add party as witness
-            log::info!("Added party {} as Gather ECHO1 witness", sender);
+            log::debug!("Added party {} as Gather ECHO1 witness", sender);
             vaba_context.gather_state.validated_gather_echos.insert(sender);
             vaba_context.gather_state.unvalidated_gather_echos.remove(&sender);
         }
@@ -89,7 +89,7 @@ impl Context{
                 }
             }
             
-            log::info!("Starting Gather Echo2 with witnesses {:?}", vec_witnesses);
+            log::debug!("Starting Gather Echo2 with witnesses {:?}", vec_witnesses);
             let prot_msg = ProtMsg::GatherEcho2(inst , vec_witnesses);
             vaba_context.gather_state.gather2_started = true;
             self.broadcast(prot_msg).await;
@@ -97,7 +97,7 @@ impl Context{
     }
 
     pub async fn process_gather_echo2(&mut self, gather_indices: Vec<Replica>, broadcaster: usize, inst: usize){
-        log::info!("Processing Gather Echo2 from {} with indices {:?}", broadcaster, gather_indices);
+        log::debug!("Processing Gather Echo2 from {} with indices {:?}", broadcaster, gather_indices);
         if !self.acs_state.vaba_states.contains_key(&inst){
             let vaba_context = VABAState::new_without_pre_justify();
             self.acs_state.vaba_states.insert(inst, vaba_context);
@@ -125,7 +125,7 @@ impl Context{
                 }
             }
             if map.is_empty(){
-                log::info!("Validated Gather Echo2, adding party {} as witness", *rep);
+                log::debug!("Validated Gather Echo2, adding party {} as witness", *rep);
                 new_witnesses.push(*rep);
             }
         }
@@ -150,7 +150,7 @@ impl Context{
         }
         if gather_indices.is_empty(){
             // Add party as witness
-            log::info!("Added party {} as Gather ECHO2 witness", sender);
+            log::debug!("Added party {} as Gather ECHO2 witness", sender);
             vaba_context.gather_state.validated_gather_echo2s.insert(sender);
             vaba_context.gather_state.unvalidated_gather_echo2s.remove(&sender);
         }

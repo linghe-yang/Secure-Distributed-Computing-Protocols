@@ -10,7 +10,7 @@ use super::state::ASKSState;
 
 impl Context{
     pub async fn init_asks(&mut self, instance_id: usize, num_secrets: usize, reconstruct_to_all: bool, secret_vec: Option<Vec<LargeField>>){        
-        log::info!("Got request to initialize ASKS instance {} with {} secrets, reconstruct_all_to_all: {}", instance_id,num_secrets, reconstruct_to_all);
+        log::debug!("Got request to initialize ASKS instance {} with {} secrets, reconstruct_all_to_all: {}", instance_id,num_secrets, reconstruct_to_all);
         // Sample secret polynomial first
         let mut shares_vec = Vec::new();
         let mut nonce_shares_vec = Vec::new();
@@ -93,7 +93,7 @@ impl Context{
 
     pub async fn process_init_asks(&mut self, enc_shares: Vec<u8>, sender: Replica, instance_id: usize){
         // Decrypt message
-        log::info!("Processing Init ASKS message from party {} in instance id {}", sender, instance_id);
+        log::debug!("Processing Init ASKS message from party {} in instance id {}", sender, instance_id);
         let secret_key_sender = self.sec_key_map.get(&sender).unwrap();
         let dec_msg = decrypt(&secret_key_sender, enc_shares);
         let deser_msg: WSSMsgSer = bincode::deserialize(dec_msg.as_slice()).unwrap();

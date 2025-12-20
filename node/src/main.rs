@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
     config.validate().expect("The decoded config is not valid");
     if let Some(f) = m.value_of("ip") {
         let f_str = f.to_string();
-        log::info!("Logging the file f {}", f_str);
+        log::debug!("Logging the file f {}", f_str);
         config.update_config(util::io::file_to_ips(f.to_string()));
     }
     let config = config;
@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
     let exit_tx;
     match vss_type {
         "ctrbc" => {
-            log::info!("Cachin Tessaro RBC protocol");
+            log::debug!("Cachin Tessaro RBC protocol");
             let exit_tx_1;
             let _status;
 

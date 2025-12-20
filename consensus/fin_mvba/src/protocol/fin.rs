@@ -16,7 +16,7 @@ impl Context{
         round: usize,
         rbc_value: Option<usize>,
     ){
-        log::info!("Starting FIN MVBA for instance {} in round {} with value {:?}", instance_id, round, rbc_value);
+        log::debug!("Starting FIN MVBA for instance {} in round {} with value {:?}", instance_id, round, rbc_value);
         if !self.round_state.contains_key(&instance_id){
             let mvba_round_state = MVBAExecState::new(instance_id);
             self.round_state.insert(instance_id, mvba_round_state);
@@ -56,7 +56,7 @@ impl Context{
         rbc_broadcaster: usize,
         broadcast_val: usize
     ){
-        log::info!("Received l1 RBC termination for instance {} and round {} from broadcaster {}",instance_id, round, rbc_broadcaster);
+        log::debug!("Received l1 RBC termination for instance {} and round {} from broadcaster {}",instance_id, round, rbc_broadcaster);
         if !self.round_state.contains_key(&instance_id){
             let mvba_round_state = MVBAExecState::new(instance_id);
             self.round_state.insert(instance_id, mvba_round_state);
@@ -88,7 +88,7 @@ impl Context{
                 }
             }
 
-            log::info!("Initializing L2 RBC for instance {} and round {}, vec: {:?}", instance_id, round, l2_rbc_vec);
+            log::debug!("Initializing L2 RBC for instance {} and round {}, vec: {:?}", instance_id, round, l2_rbc_vec);
             
 
             let ctrbc_msg = (instance_id, round, 2 as usize, l2_rbc_vec);
@@ -105,7 +105,7 @@ impl Context{
         rbc_broadcaster: usize,
         broadcast_indices: Vec<usize>
     ){
-        log::info!("Received l2 RBC termination for instance {} and round {} from broadcaster {}",instance_id, round, rbc_broadcaster);
+        log::debug!("Received l2 RBC termination for instance {} and round {} from broadcaster {}",instance_id, round, rbc_broadcaster);
         if !self.round_state.contains_key(&instance_id){
             let mvba_round_state = MVBAExecState::new(instance_id);
             self.round_state.insert(instance_id, mvba_round_state);
@@ -191,7 +191,7 @@ impl Context{
 
         if mvba_round_state.l2_approved_rbcs.len() >= self.num_nodes - self.num_faults && !mvba_round_state.l3_witness_sent{
             // Craft an L3 witness message
-            log::info!("Broadcasting L3 witness for instance {} and round {}", instance_id, round);
+            log::debug!("Broadcasting L3 witness for instance {} and round {}", instance_id, round);
             let witness_parties: Vec<usize> = mvba_round_state.l2_approved_rbcs.clone().into_iter().collect();
 
             let witness_msg = ProtMsg::L3Witness(instance_id, round, witness_parties, self.myid);
@@ -208,7 +208,7 @@ impl Context{
         witnesses: Vec<Replica>,
         share_sender: usize,
     ){
-        log::info!("Received L3 witness for instance {} and round {} from sender {}", instance_id, round, share_sender);
+        log::debug!("Received L3 witness for instance {} and round {} from sender {}", instance_id, round, share_sender);
         if !self.round_state.contains_key(&instance_id){
             let mvba_round_state = MVBAExecState::new(instance_id);
             self.round_state.insert(instance_id, mvba_round_state);
@@ -285,7 +285,7 @@ impl Context{
                 log::error!("Error in coin tossing: Coin shares are empty for instance {}", instance_id);
                 return;
             }
-            log::info!("Broadcasting coin for instance {} and round {}", instance_id, round);
+            log::debug!("Broadcasting coin for instance {} and round {}", instance_id, round);
             mvba_round_state.coin_broadcasted = true;
 
             let coin_share = instance_coin_shares.pop_front().unwrap();
@@ -307,7 +307,7 @@ impl Context{
         coin_share: LargeFieldSer,
         share_sender: usize,
     ){
-        log::info!("Received leader coin for instance {} and round {} from sender {}", instance_id, round, share_sender);
+        log::debug!("Received leader coin for instance {} and round {} from sender {}", instance_id, round, share_sender);
         
         if !self.round_state.contains_key(&instance_id){
             let mvba_round_state = MVBAExecState::new(instance_id);
@@ -353,7 +353,7 @@ impl Context{
             let mut rng = StdRng::from_seed(coin);
             let leader_id = rng.gen_range(0, self.num_nodes);
             
-            log::info!("Leader elected for instance {} and round {}: {}", instance_id, round, leader_id);
+            log::debug!("Leader elected for instance {} and round {}: {}", instance_id, round, leader_id);
             mvba_round_state.leader_id = Some(leader_id);
 
             let mut coin_shares_ba = Vec::new();
@@ -372,14 +372,14 @@ impl Context{
 
             let bin_aa_instance = 100*instance_id + round;
             if mvba_round_state.l2_approved_rbcs.contains(&leader_id){
-                log::info!("Leader approved for Binary BA in instance {}", instance_id);
+                log::debug!("Leader approved for Binary BA in instance {}", instance_id);
                 // Input this to BA
                 // Compile coin shares
                 let _ra_status  = self.ra_aa_req.send((0, 2, bin_aa_instance)).await;
                 let _status = self.bin_aa_req.send((bin_aa_instance, 2, coin_shares_ba)).await;
             }
             else{
-                log::info!("Leader not approved for Binary BA in instance {}", instance_id);
+                log::debug!("Leader not approved for Binary BA in instance {}", instance_id);
                 let _status = self.ra_aa_req.send((0, 0, bin_aa_instance)).await;
                 let _status = self.bin_aa_req.send((bin_aa_instance, 0, coin_shares_ba)).await;
             }
@@ -391,7 +391,7 @@ impl Context{
         bin_aa_instance_id: usize,
         output_val: usize,
     ){
-        log::info!("Received BBA termination for instance {} with output value {}", bin_aa_instance_id, output_val);
+        log::debug!("Received BBA termination for instance {} with output value {}", bin_aa_instance_id, output_val);
         let instance_id = bin_aa_instance_id/100;
         let round = bin_aa_instance_id % 100;
 
@@ -424,7 +424,7 @@ impl Context{
         ra_instance_id: usize,
         output_val: usize,
     ){
-        log::info!("Received RA termination for instance {} with output value {}", ra_instance_id, output_val);
+        log::debug!("Received RA termination for instance {} with output value {}", ra_instance_id, output_val);
         let instance_id = ra_instance_id/100;
         let round = ra_instance_id % 100;
 
@@ -470,7 +470,7 @@ impl Context{
         let mvba_round_state = mvba_exec_state.mvbas.get_mut(&round).unwrap();
         if mvba_round_state.bba_output.is_some() && mvba_round_state.leader_id.is_some() && mvba_exec_state.output.is_none(){
             // Round is terminated
-            log::info!("Round {} for instance {} is terminated with output {}", round, instance_id, mvba_round_state.bba_output.unwrap());
+            log::debug!("Round {} for instance {} is terminated with output {}", round, instance_id, mvba_round_state.bba_output.unwrap());
             let bba_output = mvba_round_state.bba_output.unwrap();
             if bba_output == 2{
                 let leader_id = mvba_round_state.leader_id.unwrap();
@@ -483,22 +483,22 @@ impl Context{
                             rbc_outputs.push(l1_rbc.clone());
                         }
                         else{
-                            log::info!("Did not receive RBC of party {} yet, waiting for it in instance id {}", party, instance_id);
+                            log::debug!("Did not receive RBC of party {} yet, waiting for it in instance id {}", party, instance_id);
                             return;
                         }
                     }
-                    log::info!("Consensus output in instance {} is {:?}", instance_id, rbc_outputs);
+                    log::debug!("Consensus output in instance {} is {:?}", instance_id, rbc_outputs);
                     mvba_exec_state.output = Some(rbc_outputs.clone());
                     let _status = self.out_mvba_values.send((instance_id, rbc_outputs)).await;
                 }
                 else{
-                    log::info!("Did not terminate leader's RBC yet in instance id {}, waiting for it", instance_id);
+                    log::debug!("Did not terminate leader's RBC yet in instance id {}, waiting for it", instance_id);
                     return;
                 }
             }
             else{
                 // Start new round
-                log::info!("No leader elected in instance {} for round {}, starting new round", instance_id, round);
+                log::debug!("No leader elected in instance {} for round {}, starting new round", instance_id, round);
                 self.start_fin_mvba(instance_id, round+1, None).await;
             }
         }

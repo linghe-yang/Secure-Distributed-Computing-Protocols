@@ -20,7 +20,7 @@ pub struct AVIDShard{
 impl AVIDShard{
     pub fn verify(&self, hash_state: &HashState)->bool{
         let hash_of_shard: [u8; 32] = do_hash(self.shard.as_slice());
-        // log::info!("Hash of shard {:?}, 
+        // log::debug!("Hash of shard {:?},
         // Hash of shard from proof {:?}, root of proof {:?},
         // Hash of shard from master proof {:?}", 
         //     hash_of_shard, 

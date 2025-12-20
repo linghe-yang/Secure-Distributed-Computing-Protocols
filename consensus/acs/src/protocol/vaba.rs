@@ -22,7 +22,7 @@ impl Context{
         // Start ASKS
         // (Instance ID, Number of secrets to be proposed, All_to_all reconstruction, Reconstruction Request?, Reconstruction_related_data) 
         let status = self.asks_req.send((instance,1, true, false, None, None)).await;
-        log::info!("Sent ASKS request for instance {} with status: {:?}", instance, status);
+        log::debug!("Sent ASKS request for instance {} with status: {:?}", instance, status);
         self.broadcast_pre(instance).await;
         if status.is_err(){
             log::error!("Error sending transaction to the ASKS queue, abandoning ACS instance");
@@ -31,7 +31,7 @@ impl Context{
     }
 
     pub async fn process_pre_broadcast(&mut self, inst: usize, broadcaster: usize, rbc_value: Vec<u8>){
-        log::info!("Received pre-broadcast for instance {} from Replica {}", inst, broadcaster);
+        log::debug!("Received pre-broadcast for instance {} from Replica {}", inst, broadcaster);
         let msg: (Replica, Vec<Replica>, Vec<(Replica,Replica)>) = bincode::deserialize(rbc_value.as_slice()).unwrap();
         
         if !self.acs_state.vaba_states.contains_key(&inst){
@@ -55,8 +55,8 @@ impl Context{
         // Termination Gadget value
         if representative_rep == self.num_nodes && self.acs_state.re_broadcast_messages.contains_key(&value){
             // Output this value finally
-            log::info!("ACS output of value {}", value);
-            log::info!("ACS output {:?}", self.acs_state.re_broadcast_messages.get(&value).unwrap());
+            log::debug!("ACS output of value {}", value);
+            log::debug!("ACS output {:?}", self.acs_state.re_broadcast_messages.get(&value).unwrap());
             // Shift all this part of the code to a new repository
             // Compute random linear combination of shares
             let output_set = self.acs_state.re_broadcast_messages.get(&value).unwrap();
@@ -82,7 +82,7 @@ impl Context{
             vaba_context.pre.is_some() && 
             vaba_context.justify.is_some() &&
             !vaba_context.pre_broadcast {
-            log::info!("Starting Pre broadcast for instance_id {}", inst);
+            log::debug!("Starting Pre broadcast for instance_id {}", inst);
             // Start new RBC instance
             let mut p_i: Vec<Replica> = vaba_context.term_asks_instances.clone().into_iter().collect();
             p_i.truncate(self.num_faults+1);
@@ -113,7 +113,7 @@ impl Context{
 
     // Checks if the termination of an RBC added any new witnesses for PRE Broadcast
     pub async fn check_witness_pre_broadcast(&mut self, inst: usize){
-        log::info!("Checking for witnesses in inst {}", inst);
+        log::debug!("Checking for witnesses in inst {}", inst);
         let mut list_of_witnesses = Vec::new();
         if !self.acs_state.vaba_states.contains_key(&inst){
             return;
@@ -126,7 +126,7 @@ impl Context{
                 if (entry.0.is_some() && (self.acs_state.accepted_witnesses.contains(&entry.0.clone().unwrap()))) || 
                     entry.0.is_none(){
                     if entry.1.is_empty(){
-                        log::info!("Found new witness {} at check_witness_pre_broadcast for inst {}", *key, inst);
+                        log::debug!("Found new witness {} at check_witness_pre_broadcast for inst {}", *key, inst);
                         list_of_witnesses.push(*key);
                     }
                     else{
@@ -144,11 +144,11 @@ impl Context{
         let vaba_context = self.acs_state.vaba_states.get_mut(&inst).unwrap();
         for witness in list_of_witnesses.iter(){
             vaba_context.unvalidated_pre_justify_votes.remove(witness);
-            log::info!("Validated party {}'s Pre vote, adding party to validated list", *witness);
+            log::debug!("Validated party {}'s Pre vote, adding party to validated list", *witness);
             vaba_context.validated_pre_justify_votes.insert(*witness);
             
             if vaba_context.reliable_agreement.len() <= self.num_nodes - self.num_faults{
-                log::info!("Starting Reliable Agreement for witness {}", *witness);
+                log::debug!("Starting Reliable Agreement for witness {}", *witness);
                 let status = self.ra_req_send.send((*witness,1, inst)).await;
                 if status.is_err(){
                     log::error!("Error sending transaction to the RA queue, abandoning ACS instance");
@@ -179,12 +179,12 @@ impl Context{
             // Check if party pre's RBC terminated in the first phase
             if remaining_asks_instances.is_empty() && self.acs_state.accepted_witnesses.contains(pre){
                 // Add party to set of witnesses
-                log::info!("Validated party {}'s Pre vote, adding party to validated list", broadcaster);
+                log::debug!("Validated party {}'s Pre vote, adding party to validated list", broadcaster);
                 vaba_context.validated_pre_justify_votes.insert(broadcaster.clone());
             }
 
             else{
-                log::info!("Party {}'s Pre vote is not validated, adding to unvalidated votes", broadcaster);
+                log::debug!("Party {}'s Pre vote is not validated, adding to unvalidated votes", broadcaster);
                 // Create an entry in unvalidated votes
                 let pre_option;
                 if self.acs_state.accepted_witnesses.contains(pre){
@@ -215,7 +215,7 @@ impl Context{
         
         if vaba_context.validated_pre_justify_votes.contains(&broadcaster) && 
             vaba_context.reliable_agreement.len() <= self.num_nodes - self.num_faults{
-            log::info!("Starting Reliable Agreement for witness {} under method check_witness_single_party", broadcaster);
+            log::debug!("Starting Reliable Agreement for witness {} under method check_witness_single_party", broadcaster);
             let status = self.ra_req_send.send((broadcaster,1, inst)).await;
             if status.is_err(){
                 log::error!("Error sending transaction to the RA queue, abandoning ACS instance");
@@ -227,7 +227,7 @@ impl Context{
     }
 
     pub async fn check_gather_start(&mut self, inst: usize){
-        log::info!("Checking if Gather can be started for instance {}", inst);
+        log::debug!("Checking if Gather can be started for instance {}", inst);
         let vaba_context = self.acs_state.vaba_states.get_mut(&inst).unwrap();
         if vaba_context.validated_pre_justify_votes.len() >= self.num_nodes - self.num_faults && 
             vaba_context.reliable_agreement.len() >= self.num_nodes-self.num_faults &&
@@ -243,7 +243,7 @@ impl Context{
             
             if gather_start_set.len() >= self.num_nodes - self.num_faults{
                 // Start Gather by sending Gather Echo
-                log::info!("Starting Gather Phase 1 with indices {:?}", gather_start_set);
+                log::debug!("Starting Gather Phase 1 with indices {:?}", gather_start_set);
                 let prot_msg = ProtMsg::GatherEcho(inst , gather_start_set);
                 
                 // Gather started here
@@ -254,7 +254,7 @@ impl Context{
     }
 
     pub async fn start_vote_phase(&mut self, instance: usize, leader: Replica){
-        log::info!("Starting Vote Phase for instance {} with leader {}", instance, leader);
+        log::debug!("Starting Vote Phase for instance {} with leader {}", instance, leader);
         let vaba_context = self.acs_state.vaba_states.get_mut(&instance).unwrap();
         let pre_value_of_leader = vaba_context.pre_justify_votes.get(&leader).unwrap().0;
 
@@ -290,13 +290,13 @@ impl Context{
         }
 
         let vote_rep = usize::from_be_bytes(bytes);
-        log::info!("Received vote for instance {} from party {}", vote_rep, broadcaster);
+        log::debug!("Received vote for instance {} from party {}", vote_rep, broadcaster);
         if vaba_context.votes.contains_key(&vote_rep){
             let rep_list = vaba_context.votes.get_mut(&vote_rep).unwrap();
             rep_list.insert(broadcaster);
             if rep_list.len() == self.num_nodes - self.num_faults{
                 // Start Reliable Agreement as a termination gadget
-                log::info!("Vote for {} has been validated, starting Reliable Agreement", vote_rep);
+                log::debug!("Vote for {} has been validated, starting Reliable Agreement", vote_rep);
                 let status = self.ra_req_send.send((self.num_nodes, vote_rep, inst)).await;
                 if status.is_err(){
                     log::error!("Error sending transaction to the RA queue, abandoning ACS instance");

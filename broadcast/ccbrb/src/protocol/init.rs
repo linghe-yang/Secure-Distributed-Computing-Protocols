@@ -25,17 +25,17 @@ impl Context {
         assert_eq!(shards.len(), n);
 
         // print input message and shards. input message and shards for instance_id:
-        // log::info!(
+        // log::debug!(
         //     "INIT: Input message for instance_id {}: {:?}",
         //     instance_id,
         //     input_msg
         // );
-        // log::info!("INIT: Shards for instance_id {}: {:?}", instance_id, shards);
+        // log::debug!("INIT: Shards for instance_id {}: {:?}", instance_id, shards);
 
         // D
         let d_hashes: Vec<_> = shards.iter().map(|s| do_hash(s)).collect();
 
-        // log::info!(
+        // log::debug!(
         //     "INIT: D hashes for instance_id {}: {:?}",
         //     instance_id,
         //     d_hashes
@@ -102,8 +102,8 @@ impl Context {
         let expected_hash = msg.d_hashes[self.myid];
 
         if computed_hash != expected_hash {
-            log::info!("Hash mismatch in INIT: ignoring.");
-            // log::info!(
+            log::debug!("Hash mismatch in INIT: ignoring.");
+            // log::debug!(
             //     "Computed hash: {:?}, Expected hashes: {:?}, instance_id: {}",
             //     computed_hash,
             //     msg.d_hashes,

@@ -9,7 +9,7 @@ use super::VABAState;
 
 impl Context{
     pub async fn process_asks_termination(&mut self, instance: usize, sender: Replica, value: Option<Vec<LargeField>>){
-        log::info!("Processing ASKS termination for instance {} from sender {}", instance, sender);
+        log::debug!("Processing ASKS termination for instance {} from sender {}", instance, sender);
         if !self.acs_state.vaba_states.contains_key(&instance){
             let vaba_context = VABAState::new_without_pre_justify();
             self.acs_state.vaba_states.insert(instance, vaba_context);
@@ -39,7 +39,7 @@ impl Context{
         if vaba_context.asks_reconstruction_started{
             return;
         }
-        log::info!("Secret reconstruction started for instance {}", instance);
+        log::debug!("Secret reconstruction started for instance {}", instance);
         for rep in 0..self.num_nodes{
             vaba_context.ranks_parties.insert(rep, LargeField::from(0));
         }
@@ -81,7 +81,7 @@ impl Context{
     }
 
     pub async fn process_asks_reconstruction_result(&mut self, instance: usize, secret_preparer_rep: usize, recon_result: Vec<LargeField>){
-        log::info!("Received reconstruction result from ASKS for instance {} and Replica {}", instance, secret_preparer_rep);
+        log::debug!("Received reconstruction result from ASKS for instance {} and Replica {}", instance, secret_preparer_rep);
         
         let recon_result = recon_result[0].clone();
         // Compute Rank of reconstruction
@@ -136,7 +136,7 @@ impl Context{
                 }
             }
             // Rank and Leader elected with rank
-            log::info!("Party with maximum rank {}, maximum rank {}", party_with_max_rank, max_rank);
+            log::debug!("Party with maximum rank {}, maximum rank {}", party_with_max_rank, max_rank);
             vaba_context.elected_leader = Some(party_with_max_rank.clone());
             // Start voting phase
             self.start_vote_phase(instance, party_with_max_rank).await;

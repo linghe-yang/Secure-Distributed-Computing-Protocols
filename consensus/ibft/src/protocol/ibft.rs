@@ -16,7 +16,7 @@ impl Context{
     }
 
     pub async fn process_acss_termination(&mut self, instance_id: usize, term_party: Replica, sender: Replica){
-        log::info!("Received ACSS termination event from party {} for ACSS instantiated by {} in instance id {}",sender, term_party, instance_id);
+        log::debug!("Received ACSS termination event from party {} for ACSS instantiated by {} in instance id {}",sender, term_party, instance_id);
         if !self.ibft_state_map.contains_key(&instance_id){
             let ibft_state_map = IBFTState::new();
             self.ibft_state_map.insert(instance_id, ibft_state_map);
@@ -37,7 +37,7 @@ impl Context{
             self.myid == self.leader_id && 
             !ibft_state.broadcast_started{
 
-            log::info!("Consensus set reached size n-t, using CTRBC channel to broadcast set for instance {}", instance_id);
+            log::debug!("Consensus set reached size n-t, using CTRBC channel to broadcast set for instance {}", instance_id);
             let mut inp_set_vec = Vec::new();
             inp_set_vec.extend(ibft_state.consensus_inp_set.iter().cloned());
 
@@ -48,7 +48,7 @@ impl Context{
             if ctrbc_status.is_err() {
                 log::error!("Failed to send CTRBC request for instance {}", instance_id);
             } else {
-                log::info!("CTRBC request sent successfully for instance {}", instance_id);
+                log::debug!("CTRBC request sent successfully for instance {}", instance_id);
             }
             ibft_state.broadcast_started = true;
         }
@@ -57,7 +57,7 @@ impl Context{
     pub async fn process_ctrbc_termination(&mut self, ctrbc_msg: Vec<u8>){
         let (instance_id,party_set): ( usize, Vec<Replica>) = bincode::deserialize(&ctrbc_msg)
             .expect("Failed to deserialize CTRBC message");
-        log::info!("Received CTRBC termination for instance id {} with party set {:?}", instance_id, party_set);
+        log::debug!("Received CTRBC termination for instance id {} with party set {:?}", instance_id, party_set);
         if !self.ibft_state_map.contains_key(&instance_id){
             let ibft_state = IBFTState::new();
             self.ibft_state_map.insert(instance_id, ibft_state);
@@ -70,7 +70,7 @@ impl Context{
         if out_status.is_err() {
             log::error!("Failed to send CTRBC request for instance {}", instance_id);
         } else {
-            log::info!("CTRBC request sent successfully for instance {}", instance_id);
+            log::debug!("CTRBC request sent successfully for instance {}", instance_id);
         }
     }
 }

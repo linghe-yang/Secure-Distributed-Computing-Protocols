@@ -60,7 +60,7 @@ impl Context {
     pub async fn terminate(&mut self, instance_id: usize, data: Vec<u8>) {
         let inst_id = instance_id % self.threshold;
         let party = instance_id/self.threshold;
-        log::info!("Terminated {}th RBC initiated by instance {}, sending message back to the channel",inst_id, party);
+        log::debug!("Terminated {}th RBC initiated by instance {}, sending message back to the channel",inst_id, party);
 
         let status = self.out_rbc.send((inst_id,party,data)).await;
         if status.is_err(){

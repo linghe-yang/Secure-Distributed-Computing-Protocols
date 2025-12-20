@@ -61,7 +61,7 @@ impl Context {
 
         if shards_map.len() == self.num_faults + 1 && avid_context.message.is_none(){
             // Sent ECHOs and getting a ready message for the same ECHO
-            log::info!("Received enough messages for interpolating AVID message in instance {} sent by origin {}", instance_id, origin);
+            log::debug!("Received enough messages for interpolating AVID message in instance {} sent by origin {}", instance_id, origin);
             let mut shards:Vec<Option<Vec<u8>>> = Vec::new();
             let mut proof_master_root = None;
             for rep in 0..self.num_nodes{   
@@ -86,7 +86,7 @@ impl Context {
             // Reconstruct Merkle Root
             let merkle_tree = construct_merkle_tree(shards.clone(), &self.hash_context);
             if merkle_tree.root() == proof_master_root.unwrap().item(){
-                log::info!("Reconstructed Merkle root and message successfully with validation for instance id {} from sender {}", instance_id, origin);
+                log::debug!("Reconstructed Merkle root and message successfully with validation for instance id {} from sender {}", instance_id, origin);
                 let mut message = Vec::new();
                 for i in 0..self.num_faults+1{
                     message.extend(shards.get(i).clone().unwrap());
@@ -100,7 +100,7 @@ impl Context {
         }
         if ready_senders.len() >= self.num_nodes - self.num_faults && !avid_context.terminated{
             if avid_context.message.is_some(){
-                log::info!("Received n-f READY messages for AVID Instance ID {} from origin {}, terminating",instance_id, origin);
+                log::debug!("Received n-f READY messages for AVID Instance ID {} from origin {}, terminating",instance_id, origin);
                 // Terminate protocol
                 let message = avid_context.message.clone().unwrap();
                 avid_context.terminated = true;
@@ -109,10 +109,10 @@ impl Context {
                 
                 let truncated_deser_message = deser_message[0..msg_len].to_vec();
                 if &truncated_deser_message[0..32] == self.zero_hash{
-                    log::info!("Received dummy message, not sending to parent process");
+                    log::debug!("Received dummy message, not sending to parent process");
                     return;
                 }
-                log::info!("Delivered message through AVID from sender {} for instance ID {}",avid_context.sender,instance_id);    
+                log::debug!("Delivered message through AVID from sender {} for instance ID {}",avid_context.sender,instance_id);
                 
                 //let msg = decrypt(sec_key.as_slice(), message);
                 let status = self.out_avid.send((instance_id,avid_context.sender,Some(truncated_deser_message))).await;

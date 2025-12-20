@@ -127,7 +127,7 @@ impl FoldingDZKContext{
             log::error!("Did not receive enough valid points from other parties, abandoning ACSS {}", instance_id);
             return None;
         }
-        log::info!("Successfully verified commitments and dZK proofs for column polynomial of ACSS instance {}",instance_id);
+        log::debug!("Successfully verified commitments and dZK proofs for column polynomial of ACSS instance {}",instance_id);
         // Re borrow here
         //let acss_va_state = self.acss_state.get_mut(&instance_id).unwrap();
 
@@ -186,7 +186,7 @@ impl FoldingDZKContext{
             
             
             // First, Compute Fiat-Shamir Heuristic point
-            // log::info!("Aggregated Root Hash: {:?}, g_0: {:?}, g_1: {:?}, poly_folded: {:?}", rev_agg_root_vec[index], g_0, g_1, first_poly);
+            // log::debug!("Aggregated Root Hash: {:?}, g_0: {:?}, g_1: {:?}, poly_folded: {:?}", rev_agg_root_vec[index], g_0, g_1, first_poly);
             let root = LargeField::from_bytes_be(rev_agg_roots[index].as_slice()).unwrap();
             
             let fiat_shamir_hs_point = &g_0 + &root*&g_1;
@@ -270,7 +270,7 @@ impl FoldingDZKContext{
             
             
             // First, Compute Fiat-Shamir Heuristic point
-            // log::info!("Aggregated Root Hash: {:?}, g_0: {:?}, g_1: {:?}, poly_folded: {:?}", rev_agg_root_vec[index], g_0, g_1, first_poly);
+            // log::debug!("Aggregated Root Hash: {:?}, g_0: {:?}, g_1: {:?}, poly_folded: {:?}", rev_agg_root_vec[index], g_0, g_1, first_poly);
             let root = LargeField::from_bytes_be(rev_agg_roots[index].as_slice()).unwrap();
             
             let fiat_shamir_hs_point = &g_0 + &root*&g_1;
@@ -352,7 +352,7 @@ impl FoldingDZKContext{
                         (rev_agg_roots.into_iter().zip(rev_roots.into_iter())).zip(dzk_shares.into_iter())
                     ){
             // These are the coefficients of the polynomial
-            //log::info!("DZK verification Hashes {:?} for rep {}", rev_agg_root_vec, rep);
+            //log::debug!("DZK verification Hashes {:?} for rep {}", rev_agg_root_vec, rep);
             let first_poly: Vec<LargeField> = first_poly.into_iter().map(|x| LargeField::from_bytes_be(x.as_slice()).unwrap()).collect();
             let mut degree_poly = first_poly.len()-1;
             // Evaluate points according to this polynomial
@@ -366,7 +366,7 @@ impl FoldingDZKContext{
                 
                 
                 // First, Compute Fiat-Shamir Heuristic point
-                // log::info!("Aggregated Root Hash: {:?}, g_0: {:?}, g_1: {:?}, poly_folded: {:?}", rev_agg_root_vec[index], g_0, g_1, first_poly);
+                // log::debug!("Aggregated Root Hash: {:?}, g_0: {:?}, g_1: {:?}, poly_folded: {:?}", rev_agg_root_vec[index], g_0, g_1, first_poly);
                 let root = LargeField::from_bytes_be(rev_agg_root_vec[index].as_slice()).unwrap();
                 
                 let fiat_shamir_hs_point = &g_0 + &root*&g_1;

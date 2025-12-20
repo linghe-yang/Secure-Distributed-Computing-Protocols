@@ -44,7 +44,7 @@ impl Context {
         if self.done {
             self.terminate("1".to_string()).await;
         }
-        log::info!("Received {:?} as ready", msg);
+        log::debug!("Received {:?} as ready", msg);
 
         let senders = self.ready_senders.entry(msg.hash.clone()).or_default();
 
@@ -71,18 +71,18 @@ impl Context {
                     let f = match FEC::new(self.num_faults, self.num_nodes) {
                         Ok(f) => f,
                         Err(e) => {
-                            log::info!("FEC initialization failed with error: {:?}", e);
+                            log::debug!("FEC initialization failed with error: {:?}", e);
                             return;
                         }
                     };
-                    log::info!("Decoding {:?}", shares_for_correction.to_vec());
+                    log::debug!("Decoding {:?}", shares_for_correction.to_vec());
                     match f.decode([].to_vec(), shares_for_correction.to_vec()) {
                         Ok(data) => {
-                            log::info!("Outputting: {:?}", data);
+                            log::debug!("Outputting: {:?}", data);
                             self.done = true;
                         }
                         Err(e) => {
-                            log::info!("Decoding failed with error: {}", e.to_string());
+                            log::debug!("Decoding failed with error: {}", e.to_string());
                         }
                     }
                     if self.done {

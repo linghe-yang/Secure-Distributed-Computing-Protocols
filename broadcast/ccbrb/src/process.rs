@@ -32,7 +32,7 @@ impl Context {
         if self.check_proposal(msg) {
             match wrapper_msg.protmsg {
                 ProtMsg::Echo(main_msg, instance_id) => {
-                    log::info!(
+                    log::debug!(
                         "Received Echo for instance id {} from node {:?}",
                         instance_id,
                         main_msg.origin
@@ -40,7 +40,7 @@ impl Context {
                     self.handle_echo(main_msg, instance_id).await;
                 }
                 ProtMsg::Ready(main_msg, instance_id) => {
-                    log::info!(
+                    log::debug!(
                         "Received Ready for instance id {} from node {:?}",
                         instance_id,
                         main_msg.origin
@@ -48,7 +48,7 @@ impl Context {
                     self.handle_ready(main_msg, instance_id).await;
                 }
                 ProtMsg::Init(main_msg, instance_id) => {
-                    log::info!(
+                    log::debug!(
                         "Received Init for instance id {} from node {:?}",
                         instance_id,
                         main_msg.origin
@@ -68,7 +68,7 @@ impl Context {
     pub async fn terminate(&mut self, instance_id: usize, data: Vec<u8>) {
         let inst_id = instance_id % self.threshold;
         let party = instance_id/self.threshold;
-        log::info!("Terminated {}th RBC initiated by instance {}, sending message back to the channel",inst_id, party);
+        log::debug!("Terminated {}th RBC initiated by instance {}, sending message back to the channel",inst_id, party);
 
         let status = self.out_rbc.send((inst_id,party,data)).await;
         if status.is_err(){

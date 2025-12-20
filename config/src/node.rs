@@ -155,7 +155,7 @@ impl Node {
             self.net_map.insert(idx, ip);
             idx += 1;
         }
-        log::info!("Talking to servers: {:?}", self.net_map);
+        log::debug!("Talking to servers: {:?}", self.net_map);
     }
 
     pub fn my_ip(&self) -> String {

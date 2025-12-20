@@ -130,7 +130,7 @@ impl Context {
             consensus_addrs.insert(*replica, SocketAddr::from(address.clone()));
 
         }
-        log::info!("Consensus addresses: {:?}", consensus_addrs);
+        log::debug!("Consensus addresses: {:?}", consensus_addrs);
         let my_port = consensus_addrs.get(&config.id).unwrap();
         let my_address = to_socket_address("0.0.0.0", my_port.port());
         let mut syncer_map: FnvHashMap<Replica, SocketAddr> = FnvHashMap::default();
@@ -324,7 +324,7 @@ impl Context {
                 // Receive exit handlers
                 exit_val = &mut self.exit_rx => {
                     exit_val.map_err(anyhow::Error::new)?;
-                    log::info!("Termination signal received by the server. Exiting.");
+                    log::debug!("Termination signal received by the server. Exiting.");
                     break
                 },
                 msg = self.net_recv.recv() => {
@@ -341,7 +341,7 @@ impl Context {
                 //     )?;
                 //     match sync_msg.state {
                 //         SyncState::START =>{
-                //             log::info!("Consensus Start time: {:?}", SystemTime::now()
+                //             log::debug!("Consensus Start time: {:?}", SystemTime::now()
                 //                 .duration_since(UNIX_EPOCH)
                 //                 .unwrap()
                 //                 .as_millis());
@@ -355,11 +355,11 @@ impl Context {
                 //         },
                 //         SyncState::STOP =>{
                 //             // Code used for internal purposes
-                //             log::info!("Consensus Stop time: {:?}", SystemTime::now()
+                //             log::debug!("Consensus Stop time: {:?}", SystemTime::now()
                 //                 .duration_since(UNIX_EPOCH)
                 //                 .unwrap()
                 //                 .as_millis());
-                //             log::info!("Termination signal received by the server. Exiting.");
+                //             log::debug!("Termination signal received by the server. Exiting.");
                 //             break
                 //         },
                 //         _=>{}

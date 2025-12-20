@@ -160,7 +160,7 @@ pub fn interpolate_shares( mut secret_key: Vec<u8>, num_shares: usize, is_nonce:
 }
 
 pub fn check_if_all_points_lie_on_degree_x_polynomial(eval_points: Vec<LargeField>, polys_vector: Vec<Vec<LargeField>>, degree: usize) -> (bool,Option<Vec<Polynomial<LargeField>>>){
-    //log::info!("Checking evaluations on points :{:?}, eval_points: {:?}", eval_points, polys_vector);
+    //log::debug!("Checking evaluations on points :{:?}, eval_points: {:?}", eval_points, polys_vector);
     let inverse_vandermonde = inverse_vandermonde(vandermonde_matrix(eval_points[0..degree].to_vec()));
     let polys = polys_vector.into_par_iter().map(|points| {
         let coeffs = matrix_vector_multiply(&inverse_vandermonde, &points[0..degree].to_vec());

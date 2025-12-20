@@ -34,17 +34,17 @@ impl Context {
             match wrapper_msg.clone().protmsg {
                 ProtMsg::Echo(main_msg, rep) => {
                     // RBC initialized
-                    log::info!("Received Echo from node : {:?}", rep);
+                    log::debug!("Received Echo from node : {:?}", rep);
                     self.handle_echo(main_msg).await;
                 }
                 ProtMsg::Ready(main_msg, rep) => {
                     // RBC initialized
-                    log::info!("Received Ready from node : {:?}", rep);
+                    log::debug!("Received Ready from node : {:?}", rep);
                     self.handle_ready(main_msg).await;
                 }
                 ProtMsg::Init(main_msg, rep) => {
                     // RBC initialized
-                    log::info!("Received Init from node : {:?}", rep);
+                    log::debug!("Received Init from node : {:?}", rep);
                     self.handle_init(main_msg).await;
                 }
             }

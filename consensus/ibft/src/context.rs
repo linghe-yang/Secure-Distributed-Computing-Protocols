@@ -102,7 +102,7 @@ impl Context {
             consensus_addrs.insert(*replica, SocketAddr::from(address.clone()));
 
         }
-        log::info!("Consensus addresses: {:?}", consensus_addrs);
+        log::debug!("Consensus addresses: {:?}", consensus_addrs);
         let my_port = consensus_addrs.get(&config.id).unwrap();
         let my_address = to_socket_address("0.0.0.0", my_port.port());
         let mut syncer_map: FnvHashMap<Replica, SocketAddr> = FnvHashMap::default();
@@ -227,7 +227,7 @@ impl Context {
                 // Receive exit handlers
                 exit_val = &mut self.exit_rx => {
                     exit_val.map_err(anyhow::Error::new)?;
-                    log::info!("Termination signal received by the server. Exiting.");
+                    log::debug!("Termination signal received by the server. Exiting.");
                     break
                 },
                 msg = self.net_recv.recv() => {

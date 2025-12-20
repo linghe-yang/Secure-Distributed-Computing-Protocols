@@ -42,7 +42,7 @@ impl Context {
     }
 
     pub async fn handle_ready(&mut self, msg: ReadyMsg, instance_id: usize) {
-        // log::info!(
+        // log::debug!(
         //     "Handling ready message: {:?} for instance_id: {}",
         //     msg,
         //     instance_id
@@ -58,7 +58,7 @@ impl Context {
             let pi_i = msg.pi_i.clone();
 
             let pi_i_serialized = bincode::serialize(&pi_i).unwrap();
-            // log::info!(
+            // log::debug!(
             //     "Ready message received for instance_id: {}, c: {:?}, pi_i: {:?}, origin: {}",
             //     instance_id,
             //     msg.c,
@@ -90,7 +90,7 @@ impl Context {
             //if (not yet sent ⟨𝑖𝑑, READY, 𝑐⟩ and received 𝑡 + 1 ⟨READY⟩ messages with the same 𝑐) then
 
             if !rbc_context.sent_ready {
-                // log::info!("Not sent ready yet, instance_id: {}", instance_id);
+                // log::debug!("Not sent ready yet, instance_id: {}", instance_id);
                 let threshold = self.num_faults + 1;
                 let mut all_ready_senders: HashSet<Replica> = HashSet::new();
                 for senders in pi_i_map.values() {
@@ -166,7 +166,7 @@ impl Context {
 
         // if 𝑓 𝑟𝑎𝑔𝑚𝑒𝑛𝑡𝑠ℎ𝑎𝑠ℎ𝑒𝑠 [(𝑖𝑑, 𝑐)] ≥ 2𝑡 + 1 then
         if hash_shares.len() >= 2 * self.num_faults + 1 {
-            // log::info!(
+            // log::debug!(
             //     "Received enough hash shares for instance_id: {}, c: {:?}, count: {}",
             //     instance_id,
             //     msg.c,
@@ -183,7 +183,7 @@ impl Context {
             }
 
             let f = FEC::new(self.num_faults, self.num_nodes).unwrap();
-            // log::info!(
+            // log::debug!(
             //     "About to decode D′ for instance_id: {}, c: {:?}, hash_shares: {:?}",
             //     instance_id,
             //     msg.c,
@@ -204,13 +204,13 @@ impl Context {
             }
 
             // log do hash d prime and msg.c
-            // log::info!(
+            // log::debug!(
             //     "D′ decoded for instance_id: {}, c: {:?}, d_prime: {:?}",
             //     instance_id,
             //     msg.c,
             //     &d_prime
             // );
-            // log::info!(
+            // log::debug!(
             //     "Comparing hash of d prime and msg.c for instance_id: {}, c: {:?}, d_prime: {:?}",
             //     instance_id,
             //     msg.c,
@@ -227,7 +227,7 @@ impl Context {
                 }
             };
 
-            // log::info!(
+            // log::debug!(
             //     "after decoding D′ hashes: {:?} for instance_id: {}, c: {:?}",
             //     d_hashes,
             //     instance_id,
@@ -245,7 +245,7 @@ impl Context {
                 .collect::<Vec<_>>();
 
             // wait for t+1 ⟨ECHO⟩ message where 𝐻(𝑑𝑗) ∈ 𝐷′and filter 𝑓𝑟𝑎𝑔𝑚𝑒𝑛𝑡𝑠𝑑𝑎𝑡𝑎[(𝑖𝑑, 𝑐)] accordingly
-            // log::info!(
+            // log::debug!(
             //     "Data shares count after filtering: {} for instance_id: {}, c: {:?}",
             //     data_shares.len(),
             //     instance_id,
@@ -256,7 +256,7 @@ impl Context {
             }
 
             // print actual data shares
-            // log::info!(
+            // log::debug!(
             //     "Data shares for instance_id: {}, c: {:?}: {:?}",
             //     instance_id,
             //     msg.c,
@@ -268,7 +268,7 @@ impl Context {
             for share in &data_shares {
                 input_shares[share.number] = Some(share.data.clone());
             }
-            // log::info!(
+            // log::debug!(
             //     "Input shares initialized with {:?} slots for instance_id: {}, c: {:?}",
             //     input_shares,
             //     instance_id,
@@ -306,7 +306,7 @@ impl Context {
 
             let d_prime_hashes: Vec<Hash> = bincode::deserialize(&d_prime).unwrap();
 
-            // log::info!(
+            // log::debug!(
             //     "Recomputed shards: {:?} for instance_id: {}, c: {:?}",
             //     recomputed_shards,
             //     instance_id,
@@ -318,19 +318,19 @@ impl Context {
                 .map(|shard| do_hash(shard))
                 .collect();
 
-            // log::info!(
+            // log::debug!(
             //     "after D′ hashes: {:?}, recomputed hashes: {:?}",
             //     d_prime_hashes,
             //     recomputed_hashes
             // );
             
-            // log::info!(
+            // log::debug!(
             //         " M is verified and consistent, delivering... for instance_id: {}",
             //         instance_id
             //     );
             rbc_context.status = Status::TERMINATED;
             let output_message = recomputed_shards.concat();
-            log::info!(
+            log::debug!(
                 "RBC instance {} successfully terminated with output message of length {}",
                 instance_id,
                 output_message.len()
@@ -341,7 +341,7 @@ impl Context {
             let all_match = recomputed_hashes == d_prime_hashes;
             
             if do_hash(&d_prime) == msg.c {
-                log::info!(
+                log::debug!(
                     "D′ matches c for instance_id: {}, c: {:?}",
                     instance_id,
                     msg.c
@@ -357,13 +357,13 @@ impl Context {
                 );
             }
             if all_match {
-                log::info!(
+                log::debug!(
                     " M is verified and consistent, delivering... for instance_id: {}",
                     instance_id
                 );
                 rbc_context.status = Status::TERMINATED;
                 let output_message = recomputed_shards.concat();
-                log::info!(
+                log::debug!(
                     "RBC instance {} successfully terminated with output message of length {}",
                     instance_id,
                     output_message.len()

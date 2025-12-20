@@ -226,7 +226,7 @@ impl Context {
             tokio::select! {
                 // Receive exit handlers
                 _exit_tx = &mut self.exit_rx => {
-                    log::info!("Termination signal received by the server. Exiting.");
+                    log::debug!("Termination signal received by the server. Exiting.");
                     break
                 },
                 msg = self.net_recv.recv() => {
