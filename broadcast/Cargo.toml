@@ -42,3 +42,6 @@ lambdaworks-math = "0.11.0"
 
 # Data parallelism
 rayon = "=1.10.0"
+
+[features]
+bandwidth = []

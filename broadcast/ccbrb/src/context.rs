@@ -123,6 +123,7 @@ impl Context {
         Ok(exit_tx)
     }
 
+    #[cfg(feature = "bandwidth")]
     pub async fn broadcast(&mut self, protmsg: ProtMsg) {
         let sec_key_map = self.sec_key_map.clone();
         // Sleep to simulate network delay
@@ -158,11 +159,44 @@ impl Context {
         log::info!("Network sending bytes: {:?}", total_bytes);
     }
 
+    #[cfg(not(feature = "bandwidth"))]
+    pub async fn broadcast(&mut self, protmsg: ProtMsg) {
+        let sec_key_map = self.sec_key_map.clone();
+        // Sleep to simulate network delay
+        // sleep(Duration::from_millis(50)).await;
+        for (replica, sec_key) in sec_key_map.into_iter() {
+            if self.byz && replica != self.myid {
+                let mut byz_msg = protmsg.clone();
+
+                // Match to access inner message
+                match &mut byz_msg {
+                    ProtMsg::Init(msg,_) => {
+                        msg.d_j.data = vec![0; msg.d_j.data.len()];
+                    }
+                    _ => {}
+                }
+
+
+                let wrapper_msg = WrapperMsg::new(byz_msg, self.myid, &sec_key.as_slice());
+                let cancel_handler = self.net_send.send(replica, wrapper_msg).await;
+                self.add_cancel_handler(cancel_handler);
+                continue;
+            }
+            if replica != self.myid {
+                let wrapper_msg = WrapperMsg::new(protmsg.clone(), self.myid, &sec_key.as_slice());
+                let cancel_handler: CancelHandler<Acknowledgement> =
+                    self.net_send.send(replica, wrapper_msg).await;
+                self.add_cancel_handler(cancel_handler);
+            }
+        }
+    }
+
     pub fn add_cancel_handler(&mut self, canc: CancelHandler<Acknowledgement>) {
         self.cancel_handlers.entry(0).or_default().push(canc);
     }
 
     pub async fn send(&mut self, replica: Replica, wrapper_msg: WrapperMsg<ProtMsg>) {
+        #[cfg(feature = "bandwidth")]
         log::info!("Network sending bytes: {:?}", Bytes::from(wrapper_msg.to_bytes()).len());
         let cancel_handler: CancelHandler<Acknowledgement> =
             self.net_send.send(replica, wrapper_msg).await;
