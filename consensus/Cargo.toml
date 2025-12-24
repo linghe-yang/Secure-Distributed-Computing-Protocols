@@ -33,7 +33,7 @@ rand_chacha = "0.3.1"
 num-bigint-dig = "0.4"
 num-bigint = {version = "0.2.6", features = ["rand"]}
 
-network = { package = "network", git = "https://github.com/akhilsb/libnet-rs.git" }
+network = { package = "network", git = "https://github.com/linghe-yang/libnet-rs.git" }
 async-trait = "0"
 futures-util = "0"
 
