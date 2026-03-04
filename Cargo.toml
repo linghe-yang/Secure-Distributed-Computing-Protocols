@@ -8,6 +8,7 @@ members = [
     "crypto",
     "tools/genconfig",
     "consensus",
+    "consensus/gccf_ba",
     # "comm", (WIP: Do not enable unless testing)
     # RBC module
     "node"

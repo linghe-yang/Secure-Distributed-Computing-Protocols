@@ -8,6 +8,7 @@ use signal_hook::{
 };
 use tokio::sync::{mpsc::{channel}, oneshot};
 use std::{net::{SocketAddr, SocketAddrV4}};
+use tokio::sync::oneshot::Sender;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -95,6 +96,14 @@ async fn main() -> Result<()> {
             (exit_tx_1, _status) = spawn(config).await;
             exit_tx = exit_tx_1.unwrap();
         }
+        "gccf_ba" => {
+            log::debug!("Good case coin free BA protocol");
+            let exit_tx_1;
+            // let _status;
+
+            exit_tx_1 = spawn_gccf(config).await;
+            exit_tx = exit_tx_1.unwrap();
+        }
         _ => {
             log::error!(
                 "Matching Distributed Computing protocol not provided {}, canceling execution",
@@ -155,4 +164,22 @@ pub async fn spawn(config: Node)-> (anyhow::Result<oneshot::Sender<()>>, Vec<Res
     });
     let (exit_tx, _exit_rx) = oneshot::channel();
     (Ok(exit_tx), vec![])
+}
+
+pub async fn spawn_gccf(config: Node) -> Result<Sender<()>> {
+    let (req_send_channel, req_recv_channel) = channel(10000);
+    let (out_send_channel, mut out_recv_channel) = channel(10000);
+    let id = config.id;
+    let _serv_status = gccf_ba::Context::spawn(
+        config,
+        req_recv_channel,
+        out_send_channel,
+        true,
+    );
+    let vals = [1,0,0,0];
+    req_send_channel.send((0,vals[id] as i64)).await?;
+    while let Some(msg) = out_recv_channel.recv().await {
+        log::info!("Received message from GCCF BA channel {:?}", msg);
+    }
+    _serv_status
 }

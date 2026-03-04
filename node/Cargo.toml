@@ -15,6 +15,7 @@ ctrbc = {package = "ctrbc", path="../broadcast/ctrbc"}
 ccbrb = {package = "ccbrb", path="../broadcast/ccbrb"}
 acs = {package = "acs", path="../consensus/acs"}
 binary_ba = {package = "binary_ba", path="../consensus/binary_ba"}
+gccf_ba = {package = "gccf_ba", path="../consensus/gccf_ba"}
 fin_mvba = {package = "fin_mvba", path="../consensus/fin_mvba"}
 ibft = {package = "ibft", path="../consensus/ibft"}
 ra = {package = "ra", path="../consensus/ra"}
