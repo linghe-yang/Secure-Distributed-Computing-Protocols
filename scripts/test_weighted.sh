@@ -4,6 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 protocol="${1:-all}"
 case "$protocol" in all|wra|wavid|wrbc|wgather|wbinaa) ;; *) echo "Unknown weighted protocol: $protocol" >&2; exit 2 ;; esac
+verbosity=()
+case "${LOG_LEVEL:-info}" in info) ;; debug) verbosity=(-v) ;; trace) verbosity=(-vv) ;; *) echo "LOG_LEVEL must be info, debug or trace" >&2; exit 2 ;; esac
 command -v python3 >/dev/null || { echo "Python 3 is required for result validation" >&2; exit 2; }
 cargo_options=()
 if [[ "${OFFLINE:-1}" == 1 ]]; then cargo_options+=(--offline); fi
@@ -23,6 +25,7 @@ log_root="${LOG_DIR:-logs/weighted}"
 mkdir -p -- "$log_root"
 test_directory="$(mktemp -d "$log_root/$(date +%Y%m%d-%H%M%S)-XXXXXXXX")"
 pids=()
+script_log() { printf "%s INFO [weighted-test] %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 stop_nodes() {
     local pid any_running status=0 stop_deadline=$((SECONDS + 3))
     for pid in "${pids[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
@@ -52,14 +55,14 @@ config_directory="$test_directory/config"
 ./target/"$build_type"/genconfig --NumNodes "$num_nodes" --delay 100 --blocksize 100 --base_port "${BASE_PORT:-24500}" --client_base_port "${CLIENT_BASE_PORT:-29000}" --client_run_port "${CLIENT_RUN_PORT:-29500}" --target "$config_directory" --weights "$weights" --weight-threshold "$threshold"
 order_text="$(python3 scripts/check_weighted_results.py plan --config-dir "$config_directory" --absent "$absent" --order "${START_ORDER:-}" --bits "$bits" --payload-bytes "$payload_bytes" --timeout "$test_timeout")"
 read -r -a launch_order <<< "$order_text"
-echo "Distributed test files: $test_directory"
+script_log "Distributed test files: $test_directory"
 for component in "${protocols[@]}"; do
     if [[ "${RUN_UNIT_TESTS:-1}" == 1 ]]; then cargo test "${cargo_options[@]}" -p "$component"; fi
     result_directory="$test_directory/$component/results"
     mkdir -p -- "$result_directory"
     pids=()
     for id in "${launch_order[@]}"; do
-        ./target/"$build_type"/node --config "$config_directory/nodes-$id.json" --protocol "$component" --test-absent "$absent" --test-timeout "$test_timeout" --test-bits "$bits" --test-payload-bytes "$payload_bytes" --test-result "$result_directory/node-$id.json" > "$test_directory/$component/node-$id.log" 2>&1 &
+        ./target/"$build_type"/node "${verbosity[@]}" --config "$config_directory/nodes-$id.json" --protocol "$component" --test-absent "$absent" --test-timeout "$test_timeout" --test-bits "$bits" --test-payload-bytes "$payload_bytes" --test-result "$result_directory/node-$id.json" > "$test_directory/$component/node-$id.log" 2>&1 &
         pids+=("$!")
         printf "%s %s\n" "$id" "$!" >> "$test_directory/$component/pids.txt"
         if [[ "${START_DELAY:-0}" != 0 ]]; then sleep "$START_DELAY"; fi
@@ -83,4 +86,4 @@ for component in "${protocols[@]}"; do
     python3 scripts/check_weighted_results.py check --config-dir "$config_directory" --results "$result_directory" --pids "$test_directory/$component/pids.txt" --protocol "$component" --absent "$absent" --bits "$bits" --payload-bytes "$payload_bytes"
     stop_nodes || { echo "$component process shutdown failed" >&2; exit 1; }
 done
-echo "Distributed tests passed; logs retained at $test_directory"
+script_log "Distributed tests passed; logs retained at $test_directory"

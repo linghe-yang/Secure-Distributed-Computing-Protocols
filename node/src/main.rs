@@ -26,9 +26,28 @@ fn weighted_options(args: &ArgMatches<'_>) -> Result<Options> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
     let yaml = load_yaml!("cli.yml");
     let args = App::from_yaml(yaml).get_matches();
+    let level = match args.occurrences_of("debug") {
+        0 => log::LevelFilter::Info,
+        1 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+    if let Err(error) = node::logging::init(level) {
+        log::error!("Failed to initialize node logging: {}", error);
+        return std::process::ExitCode::FAILURE;
+    }
+    match run(&args).await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            log::error!("Node failed: {:#}", error);
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run(args: &ArgMatches<'_>) -> Result<()> {
     let config_path = args.value_of("config").unwrap();
     let protocol = args.value_of("protocol").unwrap();
     let filename = config_path.to_owned();
@@ -42,14 +61,12 @@ async fn main() -> Result<()> {
         Some("yaml" | "yml") => Node::from_yaml(filename),
         _ => return Err(anyhow!("unsupported configuration file extension")),
     };
-    simple_logger::SimpleLogger::new()
-        .with_utc_timestamps()
-        .init()?;
-    log::set_max_level(if args.occurrences_of("debug") > 0 {
-        log::LevelFilter::Debug
-    } else {
-        log::LevelFilter::Info
-    });
+    log::info!(
+        "Node {}: starting protocol {} (pid={})",
+        config.id,
+        protocol,
+        std::process::id()
+    );
     if let Some(filename) = args.value_of("ip") {
         config.update_config(util::io::file_to_ips(filename.to_owned()));
     }
@@ -67,6 +84,7 @@ async fn main() -> Result<()> {
             // Retain successful child shutdown handles until service shutdown.
             let children = statuses.into_iter().collect::<Result<Vec<_>>>()?;
             shutdown.wait().await?;
+            log::info!("CTRBC: received termination signal; shutting down");
             let _ = exit.send(());
             for child in children {
                 let _ = child.send(());

@@ -10,7 +10,10 @@ use std::collections::BTreeMap;
 use types::{InstanceId, Replica, WeightedMembership};
 
 pub const BLOCK_BYTES: usize = 32;
-pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
+// For n <= 64 and W <= n^n, the reference 256-bit certified AX bulk
+// is bounded by 126.90 MiB (odd-even) or 157.99 MiB (bitonic).
+// Keep more than 3x headroom; this caps raw file bytes, not encoded storage.
+pub const MAX_FILE_BYTES: usize = 512 * 1024 * 1024;
 pub const CHUNK_BYTES: usize = 32 * 1024;
 /// One shared directory and completion instance; stripes never run separate quorums.
 pub struct Codec {

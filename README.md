@@ -250,9 +250,20 @@ but does not encrypt payloads; private coin shares must use an encrypted channel
 application encryption. Local state and transport sequences are not restart-persistent;
 restart all services with a fresh configuration/session rather than reuse a live session.
 Current resource limits are 4096 participants, 1024 registered instances per service,
-64 MiB per WAVID file, 1 MiB per frame, and 4096 BinAA rounds. Limits are upper bounds,
+512 MiB per WAVID/WRBC file, 1 MiB per frame, and 4096 BinAA rounds. Limits are upper bounds,
 not promises that every combination fits available memory; outgoing peer queues and
 retained storage need application-level lifetime and workload management.
+
+The file cap includes headroom for the reference certified AX common-coin bulk.
+With at most 64 participants, total weight W <= n^n, 256-bit keys and a 32-byte
+secret, the layout uses 96G + 64n + 320 bytes for G binary gates. At n = 64,
+W <= 2^384 requires at most 385 bit layers (including the equality boundary).
+Sorter width is at most 129; the reference odd-even and bitonic networks use at
+most 1800 and 2241 comparators per layer, respectively. Two gates per comparator
+give conservative bulk bounds of 126.90 MiB and 157.99 MiB, even without gate
+optimization. The 512 MiB cap provides more than 3x headroom for either backend.
+These bounds concern one dealer's raw bulk; encoded storage, retrieval traffic,
+and concurrent instances can consume substantially more memory and bandwidth.
 
 The new IndexedTree reuses the repository's hash and proof types but hashes its
 indexed/domain-bound branches with SHA-256. Tests exposed that legacy HashState::hash_two
@@ -313,6 +324,7 @@ Test settings can be supplied through environment variables:
 | BASE_PORT | 24500 | First participant TCP port |
 | CLIENT_BASE_PORT / CLIENT_RUN_PORT | 29000 / 29500 | genconfig compatibility ports |
 | LOG_DIR | logs/weighted | Parent directory for retained run artifacts |
+| LOG_LEVEL | info | info, debug, or trace node logs |
 | TYPE | debug | debug or release builds |
 | OFFLINE | 1 | Set to 0 to permit Cargo dependency downloads |
 | RUN_UNIT_TESTS | 1 | Set to 0 to run only the distributed process tests |
@@ -321,6 +333,19 @@ For example, exercise reverse startup with a delay and fragmented file transfer:
 
 ```bash
 START_ORDER=3,2,1,0 START_DELAY=0.5 PAYLOAD_BYTES=131072 bash scripts/test_weighted.sh all
+```
+
+Node logs follow HashRand's log macros and simple_logger UTC timestamps. Every
+physical log line includes the timestamp, severity, and module, with plain text
+messages for startup, instance registration, storage/completion, results, and shutdown.
+ANSI colors are disabled; multiline diagnostics receive a timestamp on each line.
+Machine-readable reports remain in separate results/node-ID.json files. At info
+level BinAA prints one exact dyadic coordinate per line. Use LOG_LEVEL=debug (node -v)
+for received-message routing; LOG_LEVEL=trace corresponds to node -vv.
+
+```text
+2026-10-02T05:07:15.209Z INFO  [node::weighted_test] WAVID node 0: dispersal complete for instance InstanceId { epoch: 0, dealer: Some(0), slot: 0 } (root=...)
+2026-10-02T05:07:15.595Z INFO  [node::weighted_test] WAVID node 0: delivered file (bytes=65536, sha256=...)
 ```
 
 Each node can also be launched manually in a separate terminal, using configuration

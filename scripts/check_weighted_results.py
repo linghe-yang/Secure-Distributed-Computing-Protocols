@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -93,8 +94,11 @@ def check(directory, results, protocol, absent, bits, payload_bytes, pid_file):
                 require(all(n == 1 << bits for n in numerators), "unanimous one violated")
     else:
         raise AssertionError(f"unknown protocol: {protocol}")
-    print(json.dumps({"protocol": protocol, "status": "passed", "participants": active,
-                      "pids": [r["pid"] for r in reports], "results": str(results)}))
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    launched = [r["pid"] for r in reports]
+    print(f"{timestamp} INFO [weighted-test] {protocol} distributed test passed; "
+          f"participants={active}, pids={launched}, results={results}")
+
 
 
 def main():
@@ -111,7 +115,7 @@ def main():
     parser.add_argument("--timeout", type=int, default=40)
     args = parser.parse_args()
     require(0 <= args.bits <= 4096, "BINAA_BITS must be in 0..4096")
-    require(0 <= args.payload_bytes <= 64 * 1024 * 1024, "PAYLOAD_BYTES must be in 0..64 MiB")
+    require(0 <= args.payload_bytes <= 512 * 1024 * 1024, "PAYLOAD_BYTES must be in 0..512 MiB")
     require(0 < args.timeout <= 2147483647, "TEST_TIMEOUT must be a positive integer up to 2147483647")
     if args.mode == "plan":
         _, _, _, _, order = load_plan(args.config_dir, args.absent, args.order)

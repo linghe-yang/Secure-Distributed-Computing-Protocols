@@ -59,7 +59,7 @@ async fn exercise<R: Send + 'static, E: Send + 'static>(
                 .ok_or_else(|| anyhow!("output stream closed"))?;
             if let Some(output) = collect(event)? {
                 let result = json!({"node":*id,"result":output});
-                println!("{}", result);
+                log::info!("Node {}: output {}", id, output);
                 outputs.push(result);
                 break;
             }
@@ -71,7 +71,16 @@ async fn exercise<R: Send + 'static, E: Send + 'static>(
     Ok(outputs)
 }
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            log::error!("Single-process test failed: {:#}", error);
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+async fn run() -> Result<()> {
     let args = App::new("weighted-demo")
         .about("Local TCP test for weighted primitives")
         .arg(
@@ -100,6 +109,7 @@ async fn main() -> Result<()> {
                 .default_value("30"),
         )
         .get_matches();
+    node::logging::init(log::LevelFilter::Info)?;
     let directory = args.value_of("config-dir").unwrap();
     let first = Node::from_json(format!("{}/nodes-0.json", directory));
     let configs: Vec<_> = (0..first.num_nodes)
@@ -215,9 +225,11 @@ async fn main() -> Result<()> {
             "outputs disagree"
         );
     }
-    println!(
-        "{}",
-        json!({"protocol":protocol,"status":"passed","participants":active,"absent":absent})
+    log::info!(
+        "{} single-process TCP test passed; participants={:?}, absent={:?}",
+        protocol,
+        active,
+        absent
     );
     Ok(())
 }

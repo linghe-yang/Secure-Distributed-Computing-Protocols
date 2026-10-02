@@ -3,6 +3,12 @@ use anyhow::{ensure, Result};
 use util::weighted::MAX_INSTANCES;
 impl Context {
     pub(crate) async fn process_msg(&mut self, sender: usize, msg: ProtMsg) -> Result<()> {
+        log::debug!(
+            "Node {}: received message from node {} for instance {:?}",
+            self.id,
+            sender,
+            msg.instance
+        );
         let instance = msg.instance;
         if let Some(state) = self.states.get_mut(&instance) {
             state.receive(sender, msg);
