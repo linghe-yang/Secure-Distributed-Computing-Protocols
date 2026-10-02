@@ -1,7 +1,7 @@
 name: replica
 version: "1.0"
 author: hermitsage <dth.bht@gmail.com>
-about: Apollo node
+about: Distributed protocol node and local weighted test runner
 args:
     - config:
         short: c
@@ -21,8 +21,10 @@ args:
     - protocol:
         short: p
         long: protocol
-        help: Protocol to run
+        help: Protocol to run; weighted entries execute one local test node per process
         takes_value: true
+        required: true
+        possible_values: [ctrbc, wra, wavid, wrbc, wgather, wbinaa]
     
     - syncer:
         short: y
@@ -61,3 +63,27 @@ args:
         long: ibft
         help: Istanbul BFT
         takes_value: true
+    - test_absent:
+        long: test-absent
+        help: Comma-separated absent node IDs for the weighted test; total absent weight must be below T
+        takes_value: true
+        default_value: ""
+    - test_result:
+        long: test-result
+        help: Publish this node's weighted test result atomically as JSON; continue serving until SIGTERM or Ctrl-C
+        takes_value: true
+    - test_timeout:
+        long: test-timeout
+        help: Weighted test deadline in seconds before local output; not a protocol decision
+        takes_value: true
+        default_value: "30"
+    - test_bits:
+        long: test-bits
+        help: BinAA test precision is 2^(-bits)
+        takes_value: true
+        default_value: "8"
+    - test_payload_bytes:
+        long: test-payload-bytes
+        help: Deterministic WAVID and WRBC test file size in bytes
+        takes_value: true
+        default_value: "65536"

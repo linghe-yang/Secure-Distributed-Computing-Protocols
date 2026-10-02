@@ -17,3 +17,4 @@ pub use sym::*;
 
 mod prf;
 pub use prf::*;
+pub mod weighted_merkle;

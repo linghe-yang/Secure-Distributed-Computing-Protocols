@@ -71,6 +71,8 @@ impl Context {
         input_reqs: Receiver<(usize, Vec<u8>, Vec<LargeFieldSer>)>, 
         output_shares: Sender<(usize, Vec<u8>)>,
         byz: bool) -> anyhow::Result<(oneshot::Sender<()>, Vec<anyhow::Result<oneshot::Sender<()>>>)> {
+        config.validate_unweighted()?;
+
         // Add a separate configuration for RBC service. 
 
         let mut consensus_addrs: FnvHashMap<Replica, SocketAddr> = FnvHashMap::default();

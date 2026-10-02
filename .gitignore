@@ -28,3 +28,6 @@ testdata/
 nodes-*.json
 
 *.log
+
+# Retained configurations and results from distributed weighted tests
+/logs/weighted/

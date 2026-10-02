@@ -17,6 +17,15 @@ use toml::from_str;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Node {
+    /// Empty in legacy text configs means all physical participants have weight one.
+    #[serde(default)]
+    pub weights: Vec<types::Weight>,
+    /// Exclusive corrupt-weight bound T, separate from legacy num_faults.
+    #[serde(default)]
+    pub weight_threshold: Option<types::Weight>,
+    /// Fresh shared invocation context; generated once with the configuration bundle.
+    #[serde(default)]
+    pub session_id: [u8; 32],
     /// Node network config
     pub net_map: HashMap<Replica, String>,
 
@@ -46,6 +55,7 @@ pub struct Node {
 
 impl Node {
     pub fn validate(&self) -> Result<(), ParseError> {
+        self.validate_weights()?;
         if self.net_map.len() != self.num_nodes+1 {
             return Err(ParseError::InvalidMapLen(self.num_nodes+1, self.net_map.len()));
         }
@@ -70,6 +80,9 @@ impl Node {
 
     pub fn new() -> Node {
         Node{
+            weights: Vec::new(),
+            weight_threshold: None,
+            session_id: [0; 32],
             block_size: 0,
             client_port: 0,
             client_addr: SocketAddrV4::new("0.0.0.0".parse().unwrap(),5000).into(),

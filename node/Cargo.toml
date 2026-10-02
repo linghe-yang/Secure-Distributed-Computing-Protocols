@@ -1,5 +1,6 @@
 [package]
 name = "node"
+default-run = "node"
 version = "0.1.0"
 edition = "2021"
 
@@ -34,3 +35,9 @@ signal-hook = "0"
 network = { package = "network", git = "https://github.com/akhilsb/libnet-rs.git" }
 async-trait = "0"
 futures-util = "0"
+wra = { path = "../consensus/wra" }
+wavid = { path = "../dissemination/wavid" }
+wrbc = { path = "../broadcast/wrbc" }
+wgather = { path = "../consensus/wgather" }
+wbinaa = { path = "../consensus/wbinaa" }
+serde_json = "1"

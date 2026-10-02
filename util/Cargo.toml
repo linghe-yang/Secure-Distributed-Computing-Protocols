@@ -17,3 +17,6 @@ bytes = "1"
 types = {package = "types", path = "../types"}
 tokio-util = {version="0.6", features= ["full"]}
 log = "*"
+config = { path = "../config" }
+crypto = { path = "../crypto" }
+anyhow = "1"

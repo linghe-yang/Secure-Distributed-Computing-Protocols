@@ -161,3 +161,195 @@ This implementation is part of ongoing research in secure distributed computing,
 [7] Duan, Sisi, Xin Wang, and Haibin Zhang. "Fin: Practical signature-free asynchronous common subset in constant time." In Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security, pp. 815-829. 2023.
 
 [8] Moniz, Henrique. "The Istanbul BFT consensus algorithm." arXiv preprint arXiv:2002.03613 (2020).
+## Weighted primitives
+
+The weighted crates are additive; existing algorithms retain their implementation.
+All ten existing protocol service entry points now reject a participant weight other
+than exactly 1, including equal weights such as [3, 3, 3, 3]. A missing weights field
+in legacy JSON/TOML/YAML configurations means all weights are 1. Regenerate old binary
+configuration files because the serialized Node layout has changed. CCBRB now uses
+this workspace's config/types/crypto dependencies so it applies the same guard.
+
+Weighted membership uses strictly positive arbitrary-precision integer weights.
+Node.weights is ordered by physical node ID; Node.weight_threshold is the paper's
+exclusive corrupt-weight bound T: actual corrupt weight B < T and 3T <= W, where W
+is total weight. This is separate from legacy num_faults. Weights and T are serialized
+as hexadecimal strings; genconfig accepts decimal or 0x-prefixed integers.
+The shared session_id is generated freshly for the entire configuration bundle.
+
+Threshold boundaries follow the Python reference: WRA, WAVID storage completion, and
+WGather use strict weight > W-T quorums; relay thresholds are weight >= T. WBinAA
+certification and ECHO2 termination use weight >= W-T. Do not replace these with
+identity counts or change strict comparisons when configuring unit weights. For
+example, four unit weights with T=1 tolerate only B=0 under this model; the old
+four-node configuration with num_faults=1 retains its original meaning. Four weights
+of 3 with T=4 allow one corrupt node in the weighted protocols.
+
+| Crate | Directory | Local requests and outputs |
+| --- | --- | --- |
+| wra | consensus/wra | Register(header_id), Input(bit); Output(bit) |
+| wavid | dissemination/wavid | Register(descriptor), Disperse, Retrieve; Stored, Complete, Result(File/Invalid) |
+| wrbc | broadcast/wrbc | Register(file_bytes), Broadcast; Deliver(file) |
+| wgather | consensus/wgather | Register, Start, Add(verified dealer); DeliverSet |
+| wbinaa | consensus/wbinaa | Register(exact precision), Start(binary vector); DeliverVector |
+
+Each crate follows context/msg/process/handlers/protocol. Context::run uses Tokio
+select over authenticated network messages, local requests, and an explicit exit
+signal. Context::spawn(config, requests, events) returns a one-shot shutdown sender.
+State is independently usable for deterministic scheduling or composition over an
+application-managed transport. InstanceId carries epoch, optional dealer, and slot;
+protocol and session domains bind transport authentication and commitments.
+
+Pre-register all expected instances on every node before allowing peers to send.
+Prefer Context::spawn_with_manifest(config, requests, events, registrations), which
+installs the manifest before binding its listener. Network traffic cannot create
+instances; unknown instances are ignored. Dynamically registered instances emit
+Registered; the application must coordinate their registration before sending.
+WRA additionally accepts Expect in its manifest: it reserves one ECHO and one READY
+slot per physical sender before the application knows the header_id, then Register
+binds the header and replays matching votes. For simultaneous services, pass separate
+port ranges with Node::with_protocol_port_offset(offset); choose nonoverlapping
+ranges for WRA, WAVID, WRBC, Gather, and BinAA. The same service multiplexes epochs
+and dealers; do not start another listener for each instance.
+
+WAVID separates storage completion from retrieval. It assigns node i exactly
+ceil(3*n*w_i/W) coding coordinates, so arbitrary numerical weights do not expand into
+virtual nodes. Systematic GF(2^16) Reed-Solomon coding uses k=n and stripes of 32-byte
+source blocks, with an authenticated directory and indexed proofs. Messages are
+chunked at 32 KiB. Retrieval re-encodes recovered sources and checks the commitment;
+inconsistent coding or nonzero padding produces a publicly verifiable StorageFault,
+not a timeout-derived invalid result. Codec exposes source openings and fault
+verification for composition with the later coin project. WRBC embeds the WAVID
+state machine, starts retrieval, and delivers a valid file exactly once without an
+additional quorum layer.
+
+For joint coin storage/private-share receipts, use WAVID CompletionMode::External.
+Its descriptor may initially leave root unset: early dealer packets are buffered
+without issuing Stored. Once the higher-level broadcast authenticates the root,
+Request::Pin binds it; verified packets then issue Stored. Request::Complete accepts
+only that pinned root and represents an application-verified joint completion event,
+for example a WRA result. It deliberately bypasses the standalone ACK/READY storage
+quorum. The application remains responsible for matching headers, file lengths,
+private share verification, and the joint predicate; WASKS/common coin is not included.
+Retriever authorization is additive via Authorize, and stored data remains available
+for late authorized requests after local output. Keep services and output consumers
+alive until the application explicitly shuts them down.
+
+WGather accepts Add only for an application-verified sharing completion. Its sets
+use canonical index bitmaps, and outputs need a binding common core rather than
+identical sets. WBinAA accepts one bit per dealer and uses exact BigInt/dyadic
+arithmetic and compact round-relative codes. Precision::bits(b) requests tolerance
+2^(-b); each output is numerator / 2^exponent. Coordinates progress independently,
+and old rounds continue servicing delayed parties after vector delivery.
+
+The new network utility uses pairwise HMAC-authenticated frames and acknowledgments,
+checks session/component/configuration domains, and deduplicates reliable retries.
+It uses independent per-peer queues so a silent peer cannot block another peer.
+Transport retry timers do not decide protocol outcomes. This transport authenticates
+but does not encrypt payloads; private coin shares must use an encrypted channel or
+application encryption. Local state and transport sequences are not restart-persistent;
+restart all services with a fresh configuration/session rather than reuse a live session.
+Current resource limits are 4096 participants, 1024 registered instances per service,
+64 MiB per WAVID file, 1 MiB per frame, and 4096 BinAA rounds. Limits are upper bounds,
+not promises that every combination fits available memory; outgoing peer queues and
+retained storage need application-level lifetime and workload management.
+
+The new IndexedTree reuses the repository's hash and proof types but hashes its
+indexed/domain-bound branches with SHA-256. Tests exposed that legacy HashState::hash_two
+encrypts temporary block copies and then reads the unchanged originals; consequently
+some modified leaves do not change a legacy Merkle root. Legacy cryptographic logic
+was retained as requested. Weighted commitments use the independent SHA-256 tree,
+with singleton, malformed-proof, and every-leaf tampering tests. New wire and coding
+formats are Rust-specific and do not claim byte interoperability with the Python model.
+
+### Weighted distributed process tests
+
+Run in Ubuntu/WSL from the repository root:
+
+```bash
+bash scripts/test_weighted.sh all
+bash scripts/test_wra.sh
+bash scripts/test_wavid.sh
+bash scripts/test_wrbc.sh
+bash scripts/test_wgather.sh
+bash scripts/test_wbinaa.sh
+
+# Three silent physical nodes have total weight 3 < T=4.
+WEIGHTS=10,1,1,1,1 WEIGHT_THRESHOLD=4 ABSENT=2,3,4 bash scripts/test_weighted.sh all
+
+# Equal weighted case supporting one corrupt node.
+WEIGHTS=3,3,3,3 WEIGHT_THRESHOLD=4 ABSENT=3 bash scripts/test_weighted.sh all
+```
+
+The scripts build offline, generate a fresh configuration bundle, run state-machine
+tests, and launch one independent node process for every active participant. Each
+process loads only its own configuration and communicates with peers through TCP.
+The node entry point selects ctrbc/wra/wavid/wrbc/wgather/wbinaa using --protocol;
+weighted entries supply deterministic local test inputs. No syncer, batches, per,
+lin, opt, or ibft arguments are needed for weighted tests.
+
+Every process installs its instance manifest before binding the listener, so peers
+can start independently without a cross-node registration barrier. Results are
+written atomically, and nodes keep serving peers after local output. The script
+checks all expected outputs and distinct process IDs, then sends SIGTERM and waits
+for graceful exits. Failure paths terminate only the processes started by that
+script. Configurations, per-node logs, PID lists, and JSON results are retained in
+a unique run directory below logs/weighted; the directory is printed by the script.
+Python 3 is used only for test result validation, not for the Rust protocols.
+
+The original weighted-demo binary remains available as an additional single-process
+TCP regression harness. The distributed scripts use the node binary.
+Test settings can be supplied through environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| WEIGHTS / WEIGHT_THRESHOLD | 5,3,2,1 / 3 | Membership and exclusive corrupt-weight bound |
+| ABSENT | empty | IDs whose processes are not launched; their total weight must be below T |
+| START_ORDER | active IDs in ascending order | Comma-separated permutation of all active node IDs |
+| START_DELAY | 0 | Seconds between launching consecutive processes |
+| PAYLOAD_BYTES | 65536 | WAVID/WRBC deterministic file size; zero tests empty files |
+| BINAA_BITS | 8 | Requested precision 2^(-bits) |
+| TEST_TIMEOUT | 40 | Seconds allowed for each node to produce a result |
+| BASE_PORT | 24500 | First participant TCP port |
+| CLIENT_BASE_PORT / CLIENT_RUN_PORT | 29000 / 29500 | genconfig compatibility ports |
+| LOG_DIR | logs/weighted | Parent directory for retained run artifacts |
+| TYPE | debug | debug or release builds |
+| OFFLINE | 1 | Set to 0 to permit Cargo dependency downloads |
+| RUN_UNIT_TESTS | 1 | Set to 0 to run only the distributed process tests |
+
+For example, exercise reverse startup with a delay and fragmented file transfer:
+
+```bash
+START_ORDER=3,2,1,0 START_DELAY=0.5 PAYLOAD_BYTES=131072 bash scripts/test_weighted.sh all
+```
+
+Each node can also be launched manually in a separate terminal, using configuration
+files generated by the command below. Repeat for IDs 0 through 3:
+
+```bash
+./target/debug/node --config testdata/weighted/nodes-0.json --protocol wavid \
+  --test-result testdata/weighted/results/node-0.json --test-timeout 40
+```
+
+Stop processes with Ctrl-C or SIGTERM after every participant has produced a result.
+The test timeout only reports harness failure; it never supplies a protocol output.
+WRA uses unanimous true input, WAVID/WRBC transfer a deterministic byte pattern,
+Gather receives synthetic local completion validations for active dealers, and BinAA
+uses unanimous zero/one coordinates alongside mixed input coordinates. These are
+standalone component tests, not an end-to-end weighted coin execution.
+
+Unit tests also cover duplicate/equivocating senders, threshold boundaries, late input
+and validation, future BinAA rounds, exact agreement, invalid coding certificates,
+large weights, authentication/replay, and late authorization. These are regression
+checks, not a formal proof of the weighted algorithms.
+
+Generate a reusable weighted configuration bundle explicitly with:
+
+```bash
+cargo run -p genconfig -- --NumNodes 4 --blocksize 100 --delay 100 \
+  --base_port 15000 --client_base_port 19000 --client_run_port 19500 \
+  --target testdata/weighted --weights 5,3,2,1 --weight-threshold 3
+```
+
+When --weights is supplied and --weight-threshold is omitted, T defaults to floor(W/3).
+Review that exclusive bound against the intended corruption model before deployment.

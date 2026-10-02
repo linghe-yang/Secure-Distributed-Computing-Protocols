@@ -60,6 +60,8 @@ pub struct Context {
 
 impl Context {
     pub fn spawn(config: Node, message: Vec<u8>, byz: bool) -> anyhow::Result<oneshot::Sender<()>> {
+        config.validate_unweighted()?;
+
         let mut consensus_addrs: FnvHashMap<Replica, SocketAddr> = FnvHashMap::default();
         for (replica, address) in config.net_map.iter() {
             let address: SocketAddr = address.parse().expect("Unable to parse address");

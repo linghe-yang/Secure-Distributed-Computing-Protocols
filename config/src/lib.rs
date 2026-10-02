@@ -17,3 +17,4 @@ fn is_valid_replica(r:types::Replica, n:usize) -> bool {
 /// We dont have issues in initial synchronization even if the nodes are
 /// sleeping, as long as all the sockets are open 
 pub static mut SLEEP_TIME: u64 = 45;
+mod weighted;

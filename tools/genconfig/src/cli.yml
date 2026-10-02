@@ -46,7 +46,7 @@ args:
     - num_faults:
         short: f
         long: faults
-        help: number of faulty nodes, default is (n-1)/2
+        help: number of faulty nodes, default is (n-1)/3; legacy protocols only
         takes_value: true
     - out_type:
         short: o
@@ -77,4 +77,12 @@ args:
         short: q
         long: client_run_port
         help: The port on which the client should run on
+        takes_value: true
+    - weights:
+        long: weights
+        help: Comma-separated positive integer weights (decimal or 0x hexadecimal); defaults to all 1
+        takes_value: true
+    - weight_threshold:
+        long: weight-threshold
+        help: Exclusive corrupt-weight bound T; requires 0 < T and 3T <= W
         takes_value: true

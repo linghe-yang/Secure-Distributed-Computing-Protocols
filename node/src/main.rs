@@ -1,158 +1,108 @@
-use anyhow::{anyhow, Result};
-use clap::{load_yaml, App};
+use anyhow::{anyhow, Context as _, Result};
+use clap::{load_yaml, App, ArgMatches};
 use config::Node;
-
-use signal_hook::{
-    consts::{SIGINT, SIGTERM},
-    iterator::Signals,
+use node::weighted_test::{self, Options, Shutdown};
+use std::{
+    net::{SocketAddr, SocketAddrV4},
+    path::PathBuf,
+    time::Duration,
 };
-use tokio::sync::{mpsc::{channel}, oneshot};
-use std::{net::{SocketAddr, SocketAddrV4}};
+use tokio::sync::{mpsc::channel, oneshot};
+
+fn weighted_options(args: &ArgMatches<'_>) -> Result<Options> {
+    Ok(Options {
+        absent: args
+            .value_of("test_absent")
+            .unwrap()
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim().parse())
+            .collect::<std::result::Result<_, _>>()?,
+        result_file: args.value_of("test_result").map(PathBuf::from),
+        timeout: Duration::from_secs(args.value_of("test_timeout").unwrap().parse()?),
+        bits: args.value_of("test_bits").unwrap().parse()?,
+        payload_bytes: args.value_of("test_payload_bytes").unwrap().parse()?,
+    })
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    log::error!("{}", std::env::current_dir().unwrap().display());
     let yaml = load_yaml!("cli.yml");
-    let m = App::from_yaml(yaml).get_matches();
-    //println!("{:?}",m);
-    let conf_str = m
-        .value_of("config")
-        .expect("unable to convert config file into a string");
-    let vss_type = m
-        .value_of("protocol")
-        .expect("Unable to detect protocol to run");
-    
-    let _syncer_file = m
-        .value_of("syncer")
-        .expect("Unable to parse syncer ip file");
-    let _batches = m
-        .value_of("batches")
-        .expect("Unable to parse number of batches")
-        .parse::<usize>().unwrap();
-    let _per_batch = m
-        .value_of("per")
-        .expect("Unable to parse per batch")
-        .parse::<usize>().unwrap();
-    let _lin_quad = m
-        .value_of("lin")
-        .expect("Unable to parse per lin_quad")
-        .parse::<bool>().unwrap();
-    let _opt_pess = m
-        .value_of("opt")
-        .expect("Unable to parse per lin_quad")
-        .parse::<bool>().unwrap();
-    let _ibft = m
-        .value_of("ibft")
-        .expect("Unable to parse per ibft")
-        .parse::<bool>().unwrap();
-
-    // let broadcast_msgs_file = m
-    //     .value_of("bfile")
-    //     .expect("Unable to parse broadcast messages file");
-    // let byz_flag = m.value_of("byz").expect("Unable to parse Byzantine flag");
-    // let node_normal: bool = match byz_flag {
-    //     "true" => true,
-    //     "false" => false,
-    //     _ => {
-    //         panic!("Byz flag invalid value");
-    //     }
-    // };
-    let conf_file = std::path::Path::new(conf_str);
-    let str = String::from(conf_str);
-    let mut config = match conf_file
+    let args = App::from_yaml(yaml).get_matches();
+    let config_path = args.value_of("config").unwrap();
+    let protocol = args.value_of("protocol").unwrap();
+    let filename = config_path.to_owned();
+    let mut config = match std::path::Path::new(config_path)
         .extension()
-        .expect("Unable to get file extension")
-        .to_str()
-        .expect("Failed to convert the extension into ascii string")
+        .and_then(|e| e.to_str())
     {
-        "json" => Node::from_json(str),
-        "dat" => Node::from_bin(str),
-        "toml" => Node::from_toml(str),
-        "yaml" => Node::from_yaml(str),
-        _ => panic!("Invalid config file extension"),
+        Some("json") => Node::from_json(filename),
+        Some("dat") => Node::from_bin(filename),
+        Some("toml") => Node::from_toml(filename),
+        Some("yaml" | "yml") => Node::from_yaml(filename),
+        _ => return Err(anyhow!("unsupported configuration file extension")),
     };
-
     simple_logger::SimpleLogger::new()
         .with_utc_timestamps()
-        .init()
-        .unwrap();
-    log::set_max_level(log::LevelFilter::Info);
-    config.validate().expect("The decoded config is not valid");
-    if let Some(f) = m.value_of("ip") {
-        let f_str = f.to_string();
-        log::info!("Logging the file f {}", f_str);
-        config.update_config(util::io::file_to_ips(f.to_string()));
+        .init()?;
+    log::set_max_level(if args.occurrences_of("debug") > 0 {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    });
+    if let Some(filename) = args.value_of("ip") {
+        config.update_config(util::io::file_to_ips(filename.to_owned()));
     }
-    let config = config;
-    // Start the Reliable Broadcast protocol
-    let exit_tx;
-    match vss_type {
+    match protocol {
+        "wra" => weighted_test::wra(config, weighted_options(&args)?).await,
+        "wavid" => weighted_test::wavid(config, weighted_options(&args)?).await,
+        "wrbc" => weighted_test::wrbc(config, weighted_options(&args)?).await,
+        "wgather" => weighted_test::wgather(config, weighted_options(&args)?).await,
+        "wbinaa" => weighted_test::wbinaa(config, weighted_options(&args)?).await,
         "ctrbc" => {
-            log::info!("Cachin Tessaro RBC protocol");
-            let exit_tx_1;
-            let _status;
-
-            (exit_tx_1, _status) = spawn(config).await;
-            exit_tx = exit_tx_1.unwrap();
+            config.validate()?;
+            let mut shutdown = Shutdown::new()?;
+            let (exit, statuses) = spawn(config).await;
+            let exit = exit.context("start CTRBC")?;
+            // Retain successful child shutdown handles until service shutdown.
+            let children = statuses.into_iter().collect::<Result<Vec<_>>>()?;
+            shutdown.wait().await?;
+            let _ = exit.send(());
+            for child in children {
+                let _ = child.send(());
+            }
+            tokio::task::yield_now().await;
+            Ok(())
         }
-        _ => {
-            log::error!(
-                "Matching Distributed Computing protocol not provided {}, canceling execution",
-                vss_type
-            );
-            return Ok(());
-        }
+        _ => Err(anyhow!("unsupported protocol: {}", protocol)),
     }
-    //let exit_tx = pedavss_cc::node::Context::spawn(config).unwrap();
-    // Implement a waiting strategy
-    let mut signals = Signals::new(&[SIGINT, SIGTERM])?;
-    signals.forever().next();
-    log::error!("Received termination signal");
-    exit_tx
-        .send(())
-        .map_err(|_| anyhow!("Server already shut down"))?;
-    log::error!("Shutting down server");
-    Ok(())
 }
 
 pub fn to_socket_address(ip_str: &str, port: u16) -> SocketAddr {
-    let addr = SocketAddrV4::new(ip_str.parse().unwrap(), port);
-    addr.into()
+    SocketAddrV4::new(ip_str.parse().unwrap(), port).into()
 }
 
-pub async fn spawn(config: Node)-> (anyhow::Result<oneshot::Sender<()>>, Vec<Result<oneshot::Sender<()>>>){
-    // ctrbc_req_send_channel: Request sending channel, request receiving channel. The sending channel can be used to issue message requests to the RBC module. 
-    // ctrbc_req_recv_channel: Request receiving channel - passed as an argument. The RBC module listens to this channel. 
-    let (ctrbc_req_send_channel, ctrbc_req_recv_channel) = channel(10000);
-    
-    // ctrbc_out_send_channel: Output sending channel - passed as an argument. The RBC module sends outputs on this channel. 
-    // ctrbc_out_recv_channel: Output receiving channel. We poll this channel to get outputs from RBC module.
-    let (ctrbc_out_send_channel, mut ctrbc_out_recv_channel) = channel(10000);
-
-    let mut statuses = Vec::new();
-
-    let _rbc_serv_status = ctrbc::Context::spawn(
-        config,
-        ctrbc_req_recv_channel, 
-        ctrbc_out_send_channel, 
-        false
-    );
-
-    statuses.push(_rbc_serv_status);
-    
-    let _resp = ctrbc_req_send_channel.send(Vec::new()).await.unwrap();
-
+pub async fn spawn(
+    config: Node,
+) -> (
+    Result<oneshot::Sender<()>>,
+    Vec<Result<oneshot::Sender<()>>>,
+) {
+    let (input, requests) = channel(10000);
+    let (output, mut events) = channel(10000);
+    let exit = match ctrbc::Context::spawn(config, requests, output, false) {
+        Ok(exit) => exit,
+        Err(error) => return (Err(error), vec![]),
+    };
+    if input.send(Vec::new()).await.is_err() {
+        return (Err(anyhow!("CTRBC request channel closed")), vec![]);
+    }
     tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                msg = ctrbc_out_recv_channel.recv() => {
-                    // Execute handling logic for the received message from the channel
-                    log::debug!("Received message from CTRBC channel {:?}", msg);
-                    // self.process_ctrbc_event(ctrbc_msg.1, ctrbc_msg.0, ctrbc_msg.2).await;
-                }
-            }
+        // Keep the existing request channel alive, and consume outputs until shutdown.
+        let _input = input;
+        while let Some(event) = events.recv().await {
+            log::debug!("CTRBC output: {:?}", event);
         }
     });
-    let (exit_tx, _exit_rx) = oneshot::channel();
-    (Ok(exit_tx), vec![])
+    (Ok(exit), vec![])
 }

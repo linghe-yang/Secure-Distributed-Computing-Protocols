@@ -1,5 +1,6 @@
 #[derive(Debug)]
 pub enum ParseError {
+    Weighted(String),
     // actual, expected
     InvalidMapLen(usize, usize),
     // f, n
@@ -17,6 +18,7 @@ pub enum ParseError {
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match *self {
+            ParseError::Weighted(ref message) => write!(f, "{}", message),
             ParseError::InvalidMapLen(exp, actual) => 
             write!(f, "invalid map length: expected {}, got {}", exp, actual),
             ParseError::IncorrectFaults(fault, n) => 
@@ -36,6 +38,7 @@ impl std::fmt::Display for ParseError {
 impl std::error::Error for ParseError {
     fn description(&self) -> &str {
         match *self {
+            ParseError::Weighted(_) => "invalid weighted configuration",
             ParseError::InvalidMapLen(_,_) => "invalid map length",
             ParseError::IncorrectFaults(_,_) => "incorrect f and n values",
             ParseError::InvalidMapEntry(_) => "incorrect map entry",

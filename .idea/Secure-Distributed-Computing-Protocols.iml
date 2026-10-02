@@ -5,6 +5,8 @@
       <sourceFolder url="file://$MODULE_DIR$/broadcast/ccbrb/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/broadcast/ctrbc/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/broadcast/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/broadcast/wrbc/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/broadcast/wrbc/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/config/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/consensus/acs/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/consensus/binary_ba/src" isTestSource="false" />
@@ -12,10 +14,18 @@
       <sourceFolder url="file://$MODULE_DIR$/consensus/ibft/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/consensus/ra/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/consensus/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/consensus/wbinaa/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/consensus/wbinaa/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/consensus/wgather/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/consensus/wgather/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/consensus/wra/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/consensus/wra/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crypto/benches" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crypto/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dissemination/asks/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dissemination/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/dissemination/wavid/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/dissemination/wavid/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/node/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/tools/genconfig/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/types/src" isTestSource="false" />

@@ -8,3 +8,5 @@ mod traits;
 pub use traits::*;
 
 pub type View = usize;
+pub mod weighted;
+pub use weighted::*;
