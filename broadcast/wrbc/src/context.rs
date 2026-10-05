@@ -20,28 +20,35 @@ pub struct Context {
     startup: Vec<InstanceId>,
 }
 impl Context {
-    /// 启动当前物理节点的协议服务；必须在 Tokio runtime 内调用。
+    /// Start this physical node's protocol service inside a Tokio runtime.
     ///
-    /// # 参数选择
-    /// * `config`：`id` 对应本机；`net_map` 和 `sk_map` 配置所有节点的
-    ///   地址与认证密钥。`weights` 使用正整数，腐化总权重必须严格小于
-    ///   `weight_threshold = T`，且 `3T <= W`。`T` 不是“允许腐化节点数”。
-    ///   同一调用共享新的 `session_id`、成员表和阈值。不同服务若同时运行，
-    ///   必须使用不同监听地址；同一个服务内由 `InstanceId` 区分实例，
-    ///   不为每个实例另开端口，也不自动给端口增加偏移。
-    /// * `input`：有界请求通道。先 Register，再提交输入；跨进程启动建议
-    ///   使用 `spawn_with_manifest`，防止远端消息早于本地注册。
-    /// * `output`：有界事件通道，调用方应持续消费；通道塞满会暂停本服务。
-    ///   容量按并发实例的事件突发量选择（单实例测试可取 64）。
+    /// # Parameter selection
+    /// * `config`: set `id` to the local node ID and populate `net_map` and
+    ///   `sk_map` with every participant's address and authentication key.
+    ///   Use positive integer `weights`; actual corrupt weight must be strictly
+    ///   below `weight_threshold = T`, with `3T <= W`. T bounds weight, not the
+    ///   number of corrupt nodes. Participants share a fresh `session_id`,
+    ///   membership, and threshold for each invocation. Concurrent services need
+    ///   distinct listening addresses. One service multiplexes `InstanceId` values
+    ///   on its listener; it does not allocate ports or apply offsets per instance.
+    /// * `input`: a bounded request channel. Register before submitting input.
+    ///   Prefer `spawn_with_manifest` across processes so peer messages cannot
+    ///   arrive before local registration.
+    /// * `output`: a bounded event channel that the caller must continuously drain.
+    ///   A full channel pauses this service. Size it for event bursts across
+    ///   concurrent instances; 64 is sufficient for a single-instance test.
     ///
-    /// 返回停止句柄：发送 () 或丢弃句柄都会停止服务。应保留到上层确认
-    /// 无后续服务义务；本地输出完成并不意味着其他节点已完成。
-    /// Register 的 `instance` 必须指定 dealer；每个实例只 Broadcast 一次。
-    /// `file_bytes` 为精确文件长度（允许空文件，上限 MAX_FILE_BYTES）。
-    /// `coding` 与 WAVID 一致：默认 32 字节；偶数 32..=4096，所有节点一致。
-    /// 较大块减少条带但增大证据，详见 wavid::CodingParams。WRBC 自动让所有
-    /// 节点恢复，不需要调用方另启 WAVID 网络服务。Deliver 返回可共享的
-    /// ValidatedFile，也可用于按需源块证明；as_ref() 读取数据不复制。
+    /// Sending () on the returned handle, or dropping it, stops the service.
+    /// Retain it until the application confirms that no peer-service obligations
+    /// remain; local output does not imply that other participants have finished.
+    /// Register's `instance` must identify the dealer; Broadcast once per instance.
+    /// `file_bytes` is the exact file length, allowing zero up to MAX_FILE_BYTES.
+    /// `coding` follows WAVID: an even block size in 32..=4096 bytes, default 32,
+    /// identical at all nodes. Larger blocks reduce stripe counts but enlarge
+    /// evidence; see wavid::CodingParams. WRBC automatically enables retrieval for
+    /// all participants and requires no separate WAVID network service. Deliver
+    /// returns a shared ValidatedFile supporting on-demand source proofs; as_ref()
+    /// reads its bytes without copying.
     pub fn spawn(
         config: Node,
         input: Receiver<Request>,
@@ -49,12 +56,14 @@ impl Context {
     ) -> Result<oneshot::Sender<()>> {
         Self::spawn_with_manifest(config, input, output, Vec::new())
     }
-    /// 监听前安装实例清单，适合跨进程启动，避免消息早到导致丢弃。
+    /// Install the instance manifest before listening, preventing early peer
+    /// messages from being discarded during cross-process startup.
     ///
-    /// `config`、`input`、`output` 的选取与停止句柄语义见 [Self::spawn]。
-    /// `registrations` 最多 MAX_INSTANCES 个，不允许重复 InstanceId；
-    /// 只接受 Register，其他请求须通过 input 提交。
-    /// 每个实例的公开参数须与其他参与节点一致，具体选取见 [Self::spawn]。
+    /// See [Self::spawn] for `config`, `input`, `output`, and shutdown semantics.
+    /// `registrations` may contain at most MAX_INSTANCES entries, with no duplicate
+    /// InstanceId values. Only Register is accepted; submit other requests
+    /// through input. Each instance's public parameters must agree across its
+    /// participants; see [Self::spawn] for selection guidance.
     pub fn spawn_with_manifest(
         config: Node,
         input: Receiver<Request>,

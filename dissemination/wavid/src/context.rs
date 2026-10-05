@@ -20,43 +20,59 @@ pub struct Context {
     startup: Vec<InstanceId>,
 }
 impl Context {
-    /// 启动当前物理节点的协议服务；必须在 Tokio runtime 内调用。
+    /// Start this physical node's protocol service inside a Tokio runtime.
     ///
-    /// # 参数选择
-    /// * `config`：`id` 对应本机；`net_map` 和 `sk_map` 配置所有节点的
-    ///   地址与认证密钥。`weights` 使用正整数，腐化总权重必须严格小于
-    ///   `weight_threshold = T`，且 `3T <= W`。`T` 不是“允许腐化节点数”。
-    ///   同一调用共享新的 `session_id`、成员表和阈值。不同服务若同时运行，
-    ///   必须使用不同监听地址；同一个服务内由 `InstanceId` 区分实例，
-    ///   不为每个实例另开端口，也不自动给端口增加偏移。
-    /// * `input`：有界请求通道。先 Register，再提交输入；跨进程启动建议
-    ///   使用 `spawn_with_manifest`，防止远端消息早于本地注册。
-    /// * `output`：有界事件通道，调用方应持续消费；通道塞满会暂停本服务。
-    ///   容量按并发实例的事件突发量选择（单实例测试可取 64）。
+    /// # Parameter selection
+    /// * `config`: set `id` to the local node ID and populate `net_map` and
+    ///   `sk_map` with every participant's address and authentication key.
+    ///   Use positive integer `weights`; actual corrupt weight must be strictly
+    ///   below `weight_threshold = T`, with `3T <= W`. T bounds weight, not the
+    ///   number of corrupt nodes. Participants share a fresh `session_id`,
+    ///   membership, and threshold for each invocation. Concurrent services need
+    ///   distinct listening addresses. One service multiplexes `InstanceId` values
+    ///   on its listener; it does not allocate ports or apply offsets per instance.
+    /// * `input`: a bounded request channel. Register before submitting input.
+    ///   Prefer `spawn_with_manifest` across processes so peer messages cannot
+    ///   arrive before local registration.
+    /// * `output`: a bounded event channel that the caller must continuously drain.
+    ///   A full channel pauses this service. Size it for event bursts across
+    ///   concurrent instances; 64 is sufficient for a single-instance test.
     ///
-    /// 返回停止句柄：发送 () 或丢弃句柄都会停止服务。应保留到上层确认
-    /// 无后续服务义务；本地输出完成并不意味着其他节点已完成。
-    /// WAVID 的实例参数位于 `Request::Register.descriptor`：
-    /// * `file_bytes`：规范化 bulk 的精确长度，含上层编码内容、不含 WAVID
-    ///   的条带补零；范围 0..=MAX_FILE_BYTES，所有节点必须一致。
-    /// * `coding.block_bytes`：单个源块/编码坐标的字节数，偶数 32..=4096；
-    ///   默认 32，常见可选 64/128/256。按上层短字段和证明大小选择：增大
-    ///   可减少条带及目录，但编码错误证据要携带 n 个块。依赖论文复杂度时
-    ///   保持 b=Theta(lambda+log n)，不要随整个 bulk 大小增长。此参数被根绑定，
-    ///   注册后不得更换；与固定 32KiB 的网络分包大小无关。
-    /// * `root`：已由上层认证的目录根；尚未取得时可为 None，External 模式
-    ///   随后用 Pin 绑定。根依赖本服务的 public_id，不可混用 WRBC 的根。
-    /// * `retrievers`：允许恢复的物理节点 ID；空列表表示暂不授权，后续
-    ///   Authorize 只能追加。授权某节点前，上层须验证其恢复资格。
-    /// * `completion`：独立存储测试用 Storage；coin 需要联合私有输入回执时
-    ///   用 External，仅在联合完成条件已认证后提交 Complete。Stored 只证明
-    ///   本地存储包通过检查，不证明上层私有输入或电路语义。
-    /// * `instance`：dealer 为真实发送者 ID；epoch/slot 用于区分上层调用，
-    ///   同一会话内不得把已用 InstanceId 重新用于另一份 bulk。
-    /// 恢复输出的 ValidatedFile 支持 open_source/open_range；保留该共享句柄
-    /// 可在无需网络的情况下生成上层证据，数据访问使用 as_ref() 避免复制。
-    /// Retrieve 按收到的条带增量恢复；全部条带及补零验证通过后才输出 File。
-    /// 单条带已构成公开错误证据时可以提前输出 Invalid；Stored 仍须完整验包。
+    /// Sending () on the returned handle, or dropping it, stops the service.
+    /// Retain it until the application confirms that no peer-service obligations
+    /// remain; local output does not imply that other participants have finished.
+    /// Configure each instance through `Request::Register.descriptor`:
+    /// * `file_bytes`: the exact canonical bulk length, including application
+    ///   encoding but excluding WAVID stripe padding. Use 0..=MAX_FILE_BYTES,
+    ///   identically at every node.
+    /// * `coding.block_bytes`: bytes per source block / coding coordinate; an
+    ///   even value in 32..=4096, default 32. Common alternatives are 64/128/256.
+    ///   Choose it for the application's short fields and proof sizes: larger
+    ///   blocks reduce stripes and directory overhead, but coding-fault evidence
+    ///   contains n blocks. When relying on the paper's bounds, keep
+    ///   b=Theta(lambda+log n) rather than scaling it with the entire bulk.
+    ///   The root binds this immutable instance parameter. It is independent of
+    ///   the fixed 32 KiB network chunk size.
+    /// * `root`: the application-authenticated directory root. It may initially
+    ///   be None; External mode later binds it with Pin. Roots depend on this
+    ///   service's public_id and cannot be reused from WRBC.
+    /// * `retrievers`: physical IDs authorized to recover the file. An empty list
+    ///   grants no initial authorization; Authorize only adds IDs. The application
+    ///   must verify each node's eligibility before authorizing it.
+    /// * `completion`: use Storage for standalone storage tests, or External when
+    ///   the coin combines storage with private-input receipts. Submit Complete
+    ///   only after authenticating the joint completion predicate. Stored confirms
+    ///   verification of the local storage packet, not private inputs or circuit
+    ///   semantics in the application.
+    /// * `instance`: set dealer to the actual sender's ID. Use epoch/slot to
+    ///   distinguish application calls; never reuse an InstanceId for a different
+    ///   bulk within the same session.
+    /// Recovery returns a ValidatedFile supporting open_source/open_range. Retain
+    /// this shared handle to produce application evidence without further network
+    /// responses; use as_ref() to read bytes without copying. Retrieve recovers
+    /// stripes incrementally but emits File only after every stripe and padding
+    /// check succeeds. A stripe containing public fault evidence can produce
+    /// Invalid earlier; Stored still requires complete packet verification.
     pub fn spawn(
         config: Node,
         input: Receiver<Request>,
@@ -64,12 +80,14 @@ impl Context {
     ) -> Result<oneshot::Sender<()>> {
         Self::spawn_with_manifest(config, input, output, Vec::new())
     }
-    /// 监听前安装实例清单，适合跨进程启动，避免消息早到导致丢弃。
+    /// Install the instance manifest before listening, preventing early peer
+    /// messages from being discarded during cross-process startup.
     ///
-    /// `config`、`input`、`output` 的选取与停止句柄语义见 [Self::spawn]。
-    /// `registrations` 最多 MAX_INSTANCES 个，不允许重复 InstanceId；
-    /// 只接受 Register，其他请求须通过 input 提交。
-    /// 每个实例的公开参数须与其他参与节点一致，具体选取见 [Self::spawn]。
+    /// See [Self::spawn] for `config`, `input`, `output`, and shutdown semantics.
+    /// `registrations` may contain at most MAX_INSTANCES entries, with no duplicate
+    /// InstanceId values. Only Register is accepted; submit other requests
+    /// through input. Each instance's public parameters must agree across its
+    /// participants; see [Self::spawn] for selection guidance.
     pub fn spawn_with_manifest(
         config: Node,
         input: Receiver<Request>,
