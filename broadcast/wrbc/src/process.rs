@@ -10,15 +10,20 @@ impl Context {
             msg.instance
         );
         let instance = msg.instance;
-        if let Some(state) = self.states.get_mut(&instance) {
-            state.receive(sender, msg);
+        if let Some(mut state) = self.states.remove(&instance) {
+            state = util::weighted_compute::run(move || {
+                state.receive(sender, msg);
+                state
+            })
+            .await?;
+            self.states.insert(instance, state);
         }
         self.flush(instance).await
     }
     pub(crate) async fn process_request(&mut self, request: Request) -> Result<()> {
         let instance = request.instance();
         let registering = matches!(&request, Request::Register { .. });
-        let result = (|| -> Result<()> {
+        let result: Result<()> = async {
             match request {
                 Request::Register { file_bytes, .. } => {
                     ensure!(
@@ -36,14 +41,23 @@ impl Context {
                         )?,
                     );
                 }
-                Request::Broadcast { data, .. } => self
-                    .states
-                    .get_mut(&instance)
-                    .ok_or_else(|| anyhow::anyhow!("unregistered instance"))?
-                    .broadcast(&data)?,
+                Request::Broadcast { data, .. } => {
+                    let mut state = self
+                        .states
+                        .remove(&instance)
+                        .ok_or_else(|| anyhow::anyhow!("unregistered instance"))?;
+                    let (state, result) = util::weighted_compute::run(move || {
+                        let result = state.broadcast(&data);
+                        (state, result)
+                    })
+                    .await?;
+                    self.states.insert(instance, state);
+                    result?;
+                }
             }
             Ok(())
-        })();
+        }
+        .await;
         if result.is_ok() && registering {
             let _ = self.output.send(Event::Registered { instance }).await;
         }

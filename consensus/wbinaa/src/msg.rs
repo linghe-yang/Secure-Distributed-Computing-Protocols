@@ -15,12 +15,12 @@ impl Precision {
     }
 }
 /// Constant alphabet: initial codes 0..4, second ECHO1 codes 5..7, ECHO2 codes 8..10.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     pub coordinate: u32,
     pub code: u8,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtMsg {
     pub instance: InstanceId,
     pub round: u32,

@@ -12,7 +12,7 @@ pub struct Bundle {
     pub directory: Vec<Hash>,
     pub stripes: Vec<Vec<Fragment>>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
     Init { index: u32, bytes: Vec<u8> },
     Ack(Hash),
@@ -20,7 +20,7 @@ pub enum Kind {
     Request(Hash),
     Data { index: u32, bytes: Vec<u8> },
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtMsg {
     pub instance: InstanceId,
     pub kind: Kind,

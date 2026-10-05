@@ -4,7 +4,7 @@ use wavid::{Codec, CompletionMode, Descriptor, Event, State};
 fn early_packet_waits_for_authenticated_root() {
     let m = WeightedMembership::new(vec![Weight::from(3); 4], Weight::from(4)).unwrap();
     let instance = InstanceId::new(0, Some(0), 0);
-    let data = vec![17; 10000];
+    let data = vec![17; 32768];
     let codec = Codec::new(&m, instance, [8; 32], data.len()).unwrap();
     let prepared = codec.prepare(&data).unwrap();
     let root = prepared.root;

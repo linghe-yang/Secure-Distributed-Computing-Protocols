@@ -58,7 +58,7 @@ pub struct State {
     pub(crate) init: Assembly,
     pub(crate) data_slots: HashMap<Replica, Assembly>,
     pub(crate) unpinned_packet: Option<Vec<u8>>,
-    pub(crate) stored_packet: Option<Vec<u8>>,
+    pub(crate) stored_packet: Option<std::sync::Arc<Vec<u8>>>,
     pub(crate) directory: Option<Vec<Hash>>,
     pub(crate) rows: Vec<BTreeMap<usize, Fragment>>,
     pub(crate) acks: HashMap<Replica, Hash>,
@@ -173,13 +173,14 @@ impl State {
         Ok(())
     }
     fn store_packet(&mut self, raw: Vec<u8>) {
-        if let Some(bundle) = self.codec.decode_bundle(self.id, &raw) {
-            if let Some(root) = self
-                .codec
-                .verify_bundle(self.id, &bundle, self.descriptor.root)
+        if let Some(verified) =
+            self.codec
+                .decode_verified_bundle(self.id, &raw, self.descriptor.root, None)
+        {
             {
+                let root = verified.root;
                 self.stored_root = Some(root);
-                self.stored_packet = Some(raw);
+                self.stored_packet = Some(std::sync::Arc::new(raw));
                 self.events.push(Event::Stored {
                     instance: self.instance,
                     root,
@@ -237,8 +238,13 @@ impl State {
                     .or_insert_with(|| Assembly::new(size))
                     .add(index, bytes)
                 {
-                    if let Some(bundle) = self.codec.decode_bundle(sender, &raw) {
-                        self.accept_data(sender, bundle);
+                    if let Some(bundle) = self.codec.decode_verified_bundle(
+                        sender,
+                        &raw,
+                        self.completed_root,
+                        self.directory.as_deref(),
+                    ) {
+                        self.accept_data(bundle);
                     }
                 }
             }

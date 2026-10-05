@@ -251,8 +251,8 @@ application encryption. Local state and transport sequences are not restart-pers
 restart all services with a fresh configuration/session rather than reuse a live session.
 Current resource limits are 4096 participants, 1024 registered instances per service,
 512 MiB per WAVID/WRBC file, 1 MiB per frame, and 4096 BinAA rounds. Limits are upper bounds,
-not promises that every combination fits available memory; outgoing peer queues and
-retained storage need application-level lifetime and workload management.
+not promises that every combination fits available memory; retained storage and concurrent
+instances still need application-level lifetime and workload management.
 
 The file cap includes headroom for the reference certified AX common-coin bulk.
 With at most 64 participants, total weight W <= n^n, 256-bit keys and a 32-byte
@@ -378,3 +378,77 @@ cargo run -p genconfig -- --NumNodes 4 --blocksize 100 --delay 100 \
 
 When --weights is supplied and --weight-threshold is omitted, T defaults to floor(W/3).
 Review that exclusive bound against the intended corruption model before deployment.
+
+### Weighted transport and storage optimization (v2)
+
+Weighted endpoints enable TCP_NODELAY on both accepted and outgoing sockets, including
+reconnects, and coalesce frame lengths and bodies. A peer sends at most 32 frames per
+window (1 MiB payload target, less than 2 MiB with the last frame), then checks every
+authenticated ACK. Reconnection replays the same window and receiver sequence checks
+suppress duplicate delivery. The transport envelope and MAC bytes remain compatible.
+Receiver sequencing locks are per sender; a backpressured sender holds no global lock.
+
+Each peer queue retains at most 2 MiB / 1024 messages in RAM, in addition to its bounded
+in-flight window. Overflow is a FIFO temporary disk spool, so a silent peer cannot grow
+an unbounded RAM queue or stop a healthy peer. On Ubuntu, spool files are unlinked after
+opening and reclaimed on close or process exit. Disk usage follows outstanding traffic;
+disk exhaustion is reported as an I/O error. Spooling is not restart persistence.
+Identical pending payloads share immutable buffers; adjacent broadcast actions are
+serialized once. Frame authentication feeds the header and payload separately into HMAC.
+
+WAVID/WRBC use version-2 compact storage packets with one canonical Merkle multiproof
+per owner and stripe. Individual source openings and public fault certificates retain
+their existing 32-byte block API. SHA-256 leaf/branch input bytes are unchanged; cached
+prefix states and borrowed leaves remove repeated allocation and prefix hashing.
+The regular dispersal path prepares compact packets stripe by stripe, without producing
+and rechecking an individual opening for every stored coordinate. The checked public
+Prepared API remains available. Only internally verified recovery coordinates bypass
+repeated path verification; reconstruction still re-encodes and compares the full stripe
+commitment and checks padding before delivering a file.
+
+The coding backend uses GF(2^8) for at most 256 coordinates and GF(2^16) otherwise.
+Coding matrices are shared across instances with identical geometry; recovery reconstructs
+systematic data before the required re-encoding check. **Coding contexts and storage wire
+format changed: upgrade all WAVID/WRBC participants together and regenerate commitments;
+old prepared roots/storage packets cannot be reused.** Bulk chunks remain 32 KiB and source
+blocks remain 32 bytes. Larger source blocks are not enabled because the downstream coin
+uses block-granular source/fault proofs.
+
+WAVID/WRBC state transitions and large outgoing flushes execute on a blocking worker pool
+with a process-wide CPU budget capped at four jobs. State ownership remains serialized
+within each service. This keeps coding work off Tokio network workers; it does not create
+parallel mutation of one protocol instance or change threshold/round decisions.
+
+Run the complete optimization regression matrix with:
+
+```bash
+bash scripts/test_weighted_optimized.sh
+# Optional: omit the 64-process group or change the large-file case.
+TEST_64_NODES=0 LARGE_PAYLOAD_BYTES=16777216 bash scripts/test_weighted_optimized.sh
+```
+
+The matrix runs release unit tests, all five components with nonuniform weights, a silent
+node with reversed/delayed startup, a low-weight silent physical majority, empty WAVID,
+8 MiB WRBC with a silent node, and all five components with 64 equal-weight processes.
+It uses two Tokio workers per process by default. Compact-format tests cover both coding
+fields, corrupted/version-mismatched proofs, and byte equality of public and direct packet
+preparation. Transport tests cover partial/coalesced reads, bad/truncated ACKs, replay,
+send windows, bounded-memory spill FIFO, and silent-peer isolation.
+
+An Ubuntu/WSL release comparison on 2026-10-05 used the actual old and optimized Rust
+Endpoint implementations (HMAC and serialization included), three repeats of 24 timed
+request/reply round trips after four warmups, with two Tokio workers. Median-of-means:
+
+| Body bytes | Previous RTT | Optimized RTT |
+| --- | --- | --- |
+| 128 | 88.002 ms | 0.081 ms |
+| 32768 | 88.004 ms | 0.280 ms |
+
+These are loopback transport results, not whole-protocol or WAN speedups. A 4097-byte
+file with 64 equal-weight parties produces 229888 bytes of legacy bundles versus
+77792 bytes of v2 packets across all owners (66.2% less); retrieval and TCP overhead
+are excluded from these storage-layout counts.
+
+The validation run also completed a separate 64 MiB WRBC transfer with weights
+5,3,2,1, T=3 and node 3 silent (three active processes). The 64-process matrix
+uses 64 KiB files; these are separate scale cases.

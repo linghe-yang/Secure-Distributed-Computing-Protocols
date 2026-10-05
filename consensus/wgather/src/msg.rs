@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 use types::{InstanceId, Replica};
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
     Inform(Vec<u8>),
     Ack,
     Prepare(Vec<u8>),
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtMsg {
     pub instance: InstanceId,
     pub kind: Kind,

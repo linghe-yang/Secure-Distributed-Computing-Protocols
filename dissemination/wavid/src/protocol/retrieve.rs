@@ -1,4 +1,4 @@
-use crate::{Bundle, Event, Kind, State};
+use crate::{Event, Kind, State};
 use anyhow::{ensure, Result};
 impl State {
     pub fn authorize(&mut self, retrievers: Vec<usize>) -> Result<()> {
@@ -19,14 +19,8 @@ impl State {
         self.advance();
         Ok(())
     }
-    pub(crate) fn accept_data(&mut self, sender: usize, bundle: Bundle) {
-        if self
-            .codec
-            .verify_bundle(sender, &bundle, self.completed_root)
-            .is_none()
-        {
-            return;
-        }
+    pub(crate) fn accept_data(&mut self, verified: crate::protocol::codec::VerifiedBundle) {
+        let bundle = verified.bundle;
         if self.directory.is_none() {
             self.directory = Some(bundle.directory);
         }
@@ -63,7 +57,7 @@ impl State {
             }
             if self.asked && self.result.is_none() {
                 if let Some(directory) = &self.directory {
-                    match self.codec.recover(root, directory, &self.rows) {
+                    match self.codec.recover_verified(root, directory, &self.rows) {
                         Ok(Some(result)) => {
                             self.result = Some(result.clone());
                             self.events.push(Event::Result {

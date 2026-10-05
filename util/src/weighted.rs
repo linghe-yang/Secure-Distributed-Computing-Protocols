@@ -4,9 +4,15 @@
 use anyhow::{anyhow, Result};
 use bincode::Options;
 use config::Node;
-use crypto::hash::{do_mac, verf_mac, Hash};
+use crypto::hash::{mac_parts, serialized_mac, verify_mac_parts, Hash};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    net::SocketAddr,
+    sync::{Arc, Mutex as StdMutex, Weak},
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -17,6 +23,52 @@ use types::{Replica, SendAction};
 
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_INSTANCES: usize = 1024;
+#[path = "weighted_queue.rs"]
+mod queue;
+const WINDOW_FRAMES: usize = 32;
+const WINDOW_BYTES: usize = 1024 * 1024;
+
+// Both directions carry small latency-sensitive protocol frames or ACKs.
+fn low_latency(stream: TcpStream) -> std::io::Result<TcpStream> {
+    stream.set_nodelay(true)?;
+    Ok(stream)
+}
+
+// Keep the existing wire format, but submit its prefix and body together.
+#[cfg(test)]
+fn encode_frame(frame: &Frame) -> Result<Vec<u8>> {
+    encode_packet(
+        frame.context,
+        frame.sender,
+        frame.recipient,
+        frame.sequence,
+        &frame.payload,
+        frame.mac,
+    )
+}
+fn encode_packet(
+    context: Hash,
+    sender: Replica,
+    recipient: Replica,
+    sequence: u64,
+    payload: &[u8],
+    mac: Hash,
+) -> Result<Vec<u8>> {
+    // Fixed-width bincode envelope: 32-byte context, four u64 fields, and 32-byte MAC.
+    let size = 96 + payload.len();
+    if size > MAX_FRAME_BYTES {
+        return Err(anyhow!("weighted frame exceeds limit"));
+    }
+    let mut packet = Vec::with_capacity(size + 4);
+    packet.extend_from_slice(&(size as u32).to_le_bytes());
+    bincode::serialize_into(
+        &mut packet,
+        &(context, sender, recipient, sequence, payload.len() as u64),
+    )?;
+    packet.extend_from_slice(payload);
+    packet.extend_from_slice(&mac);
+    Ok(packet)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Frame {
@@ -27,32 +79,33 @@ struct Frame {
     payload: Vec<u8>,
     mac: Hash,
 }
+fn mac_prefix(f: &Frame) -> Vec<u8> {
+    bincode::serialize(&(
+        "weighted/frame/v1",
+        f.context,
+        f.sender,
+        f.recipient,
+        f.sequence,
+        f.payload.len() as u64,
+    ))
+    .expect("frame prefix")
+}
+#[cfg(test)]
 fn frame_mac(f: &Frame, key: &[u8]) -> Hash {
-    do_mac(
-        &bincode::serialize(&(
-            "weighted/frame/v1",
-            f.context,
-            f.sender,
-            f.recipient,
-            f.sequence,
-            &f.payload,
-        ))
-        .expect("frame encoding"),
-        key,
-    )
+    mac_parts(&[&mac_prefix(f), &f.payload], key)
 }
 fn ack_mac(f: &Frame, key: &[u8]) -> Hash {
-    do_mac(
-        &bincode::serialize(&(
+    serialized_mac(
+        &(
             "weighted/ack/v1",
             f.context,
             f.sender,
             f.recipient,
             f.sequence,
-        ))
-        .expect("ACK encoding"),
+        ),
         key,
     )
+    .expect("ACK MAC")
 }
 fn decode<T: DeserializeOwned>(raw: &[u8]) -> Result<T> {
     Ok(bincode::DefaultOptions::new()
@@ -67,7 +120,7 @@ pub struct Handler<T> {
     id: Replica,
     context: Hash,
     keys: Arc<HashMap<Replica, Vec<u8>>>,
-    received: Arc<Mutex<HashMap<Replica, u64>>>,
+    received: Arc<HashMap<Replica, Mutex<u64>>>,
     tx: mpsc::Sender<(Replica, T)>,
 }
 impl<T> Clone for Handler<T> {
@@ -82,7 +135,8 @@ impl<T> Clone for Handler<T> {
     }
 }
 impl<T: DeserializeOwned + Send + 'static> Handler<T> {
-    async fn dispatch(&self, mut stream: TcpStream) -> Result<()> {
+    async fn dispatch(&self, stream: TcpStream) -> Result<()> {
+        let mut stream = low_latency(stream)?;
         loop {
             let size = stream.read_u32_le().await? as usize;
             if size == 0 || size > MAX_FRAME_BYTES {
@@ -97,23 +151,17 @@ impl<T: DeserializeOwned + Send + 'static> Handler<T> {
                 .ok_or_else(|| anyhow!("unknown sender"))?;
             if f.context != self.context
                 || f.recipient != self.id
-                || !verf_mac(
-                    &bincode::serialize(&(
-                        "weighted/frame/v1",
-                        f.context,
-                        f.sender,
-                        f.recipient,
-                        f.sequence,
-                        &f.payload,
-                    ))?,
-                    key,
-                    &f.mac,
-                )
+                || !verify_mac_parts(&[&mac_prefix(&f), &f.payload], key, &f.mac)
             {
                 return Err(anyhow!("invalid message authentication/context"));
             }
-            let mut received = self.received.lock().await;
-            let last = received.entry(f.sender).or_insert(0);
+            let mut received = self
+                .received
+                .get(&f.sender)
+                .ok_or_else(|| anyhow!("unknown sender"))?
+                .lock()
+                .await;
+            let last = &mut *received;
             if f.sequence == last.saturating_add(1) && f.sequence != 0 {
                 let msg = decode(&f.payload)?;
                 self.tx
@@ -130,10 +178,35 @@ impl<T: DeserializeOwned + Send + 'static> Handler<T> {
     }
 }
 
+/// Share identical queued wire payloads across recipients without retaining completed sends.
+#[derive(Default)]
+struct PayloadCache {
+    entries: HashMap<Hash, Weak<Vec<u8>>>,
+    insertions: usize,
+}
+impl PayloadCache {
+    fn intern(&mut self, bytes: Vec<u8>) -> Arc<Vec<u8>> {
+        let key = crypto::hash::do_hash(&bytes);
+        if let Some(existing) = self.entries.get(&key).and_then(Weak::upgrade) {
+            // Equality keeps this a storage optimization even in the event of a hash collision.
+            if *existing == bytes {
+                return existing;
+            }
+        }
+        self.insertions += 1;
+        if self.insertions % 1024 == 0 {
+            self.entries.retain(|_, value| value.strong_count() != 0);
+        }
+        let shared = Arc::new(bytes);
+        self.entries.insert(key, Arc::downgrade(&shared));
+        shared
+    }
+}
+
 pub struct Endpoint<T> {
     pub recv: mpsc::Receiver<(Replica, T)>,
     pub public_id: Hash,
-    peers: Vec<mpsc::UnboundedSender<T>>,
+    outbound: Outbound,
     tasks: Vec<JoinHandle<()>>,
 }
 impl<T: Clone + Debug + Serialize + DeserializeOwned + Send + Sync + 'static> Endpoint<T> {
@@ -148,7 +221,7 @@ impl<T: Clone + Debug + Serialize + DeserializeOwned + Send + Sync + 'static> En
             id,
             context,
             keys: Arc::new(keys),
-            received: Arc::new(Mutex::new(HashMap::new())),
+            received: Arc::new((0..n).map(|i| (i, Mutex::new(0))).collect()),
             tx: tx.clone(),
         };
         let address: SocketAddr = config.net_map[&id].parse()?;
@@ -170,65 +243,106 @@ impl<T: Clone + Debug + Serialize + DeserializeOwned + Send + Sync + 'static> En
         })];
         let mut peers = Vec::with_capacity(n);
         for peer in 0..n {
-            let (out, mut queue) = mpsc::unbounded_channel::<T>();
-            peers.push(out);
+            let queue = Arc::new(queue::Queue::default());
+            peers.push(queue.clone());
             let tx = tx.clone();
             let key = config.sk_map[&peer].clone();
             let addr: SocketAddr = config.net_map[&peer].parse()?;
             tasks.push(tokio::spawn(async move {
                 let mut sequence = 0u64;
                 let mut connection = None;
-                while let Some(message) = queue.recv().await {
-                    if peer == id {
-                        if tx.send((id, message)).await.is_err() {
+                loop {
+                    let first = match queue.pop().await {
+                        Ok(m) => m,
+                        Err(e) => {
+                            log::error!("weighted queue: {}", e);
                             break;
+                        }
+                    };
+                    let mut messages = vec![first];
+                    let mut bytes = messages[0].len();
+                    while messages.len() < WINDOW_FRAMES && bytes < WINDOW_BYTES {
+                        match queue.try_pop() {
+                            Ok(Some(m)) => {
+                                bytes += m.len();
+                                messages.push(m);
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                log::error!("weighted queue: {}", e);
+                                return;
+                            }
+                        }
+                    }
+                    if peer == id {
+                        for message in messages {
+                            let message = match decode::<T>(&message) {
+                                Ok(m) => m,
+                                Err(_) => return,
+                            };
+                            if tx.send((id, message)).await.is_err() {
+                                return;
+                            }
                         }
                         continue;
                     }
-                    sequence = match sequence.checked_add(1) {
-                        Some(s) => s,
-                        None => break,
-                    };
-                    let mut f = Frame {
-                        context,
-                        sender: id,
-                        recipient: peer,
-                        sequence,
-                        payload: match bincode::serialize(&message) {
-                            Ok(x) => x,
-                            Err(_) => break,
-                        },
-                        mac: [0; 32],
-                    };
-                    f.mac = frame_mac(&f, &key);
-                    let raw = match bincode::serialize(&f) {
-                        Ok(x) if x.len() <= MAX_FRAME_BYTES => x,
-                        _ => {
-                            log::error!("weighted frame exceeds limit");
-                            break;
+                    let mut packet = Vec::with_capacity(bytes + messages.len() * 128);
+                    let mut acks = Vec::with_capacity(messages.len());
+                    for message in messages {
+                        sequence = match sequence.checked_add(1) {
+                            Some(s) => s,
+                            None => return,
+                        };
+                        let prefix = bincode::serialize(&(
+                            "weighted/frame/v1",
+                            context,
+                            id,
+                            peer,
+                            sequence,
+                            message.len() as u64,
+                        ))
+                        .expect("frame prefix");
+                        let mac = mac_parts(&[&prefix, &message], &key);
+                        match encode_packet(context, id, peer, sequence, &message, mac) {
+                            Ok(p) => packet.extend(p),
+                            Err(e) => {
+                                log::error!("weighted encoding: {}", e);
+                                return;
+                            }
                         }
-                    };
+                        acks.push(
+                            serialized_mac(&("weighted/ack/v1", context, id, peer, sequence), &key)
+                                .expect("ACK MAC"),
+                        );
+                    }
+                    let mut retries = 0u64;
                     loop {
                         let result = tokio::time::timeout(Duration::from_secs(5), async {
                             if connection.is_none() {
-                                connection = Some(TcpStream::connect(addr).await?);
+                                connection = Some(low_latency(TcpStream::connect(addr).await?)?);
                             }
                             let socket = connection.as_mut().unwrap();
-                            socket.write_u32_le(raw.len() as u32).await?;
-                            socket.write_all(&raw).await?;
-                            let mut ack = [0; 32];
-                            socket.read_exact(&mut ack).await?;
-                            if ack != ack_mac(&f, &key) {
-                                return Err(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "invalid ACK",
-                                ));
+                            // Replaying the whole bounded window is safe: receiver ACKs duplicates.
+                            socket.write_all(&packet).await?;
+                            for expected in &acks {
+                                let mut ack = [0; 32];
+                                socket.read_exact(&mut ack).await?;
+                                if &ack != expected {
+                                    return Err(std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        "invalid ACK",
+                                    ));
+                                }
                             }
                             Ok::<_, std::io::Error>(())
                         })
                         .await;
                         if matches!(result, Ok(Ok(()))) {
                             break;
+                        }
+                        retries = retries.wrapping_add(1);
+                        if retries % 100 == 0 {
+                            log::debug!("weighted retry peer {}", peer);
                         }
                         connection = None;
                         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -239,24 +353,76 @@ impl<T: Clone + Debug + Serialize + DeserializeOwned + Send + Sync + 'static> En
         Ok(Self {
             recv,
             public_id: context,
-            peers,
+            outbound: Outbound {
+                peers: Arc::new(peers),
+                payloads: Arc::new(StdMutex::new(PayloadCache::default())),
+            },
             tasks,
         })
     }
     pub fn send(&self, action: SendAction<T>) -> Result<()> {
-        // Reserve room for the fixed envelope before enqueueing. Bodies are protocol-bounded.
-        if bincode::serialized_size(&action.message)? > (MAX_FRAME_BYTES - 256) as u64 {
-            return Err(anyhow!("message exceeds frame limit"));
-        }
-        self.peers
-            .get(action.recipient)
-            .ok_or_else(|| anyhow!("unknown recipient"))?
-            .send(action.message)
-            .map_err(|_| anyhow!("peer sender stopped"))
+        self.outbound.send(action)
+    }
+    pub fn sender(&self) -> Outbound {
+        self.outbound.clone()
     }
 }
+#[derive(Clone)]
+pub struct Outbound {
+    peers: Arc<Vec<Arc<queue::Queue>>>,
+    payloads: Arc<StdMutex<PayloadCache>>,
+}
+impl Outbound {
+    pub fn send<T: Serialize>(&self, action: SendAction<T>) -> Result<()> {
+        let mut raw = Vec::new();
+        bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .with_limit((MAX_FRAME_BYTES - 256) as u64)
+            .serialize_into(&mut raw, &action.message)?;
+        let peer = self
+            .peers
+            .get(action.recipient)
+            .ok_or_else(|| anyhow!("unknown recipient"))?;
+        let payload = self
+            .payloads
+            .lock()
+            .map_err(|_| anyhow!("payload cache poisoned"))?
+            .intern(raw);
+        peer.push(payload).map_err(Into::into)
+    }
+    pub fn send_batch<T: Serialize + PartialEq>(&self, actions: Vec<SendAction<T>>) -> Result<()> {
+        let mut previous: Option<(T, Arc<Vec<u8>>)> = None;
+        for action in actions {
+            let peer = self
+                .peers
+                .get(action.recipient)
+                .ok_or_else(|| anyhow!("unknown recipient"))?;
+            let payload = match &previous {
+                Some((message, payload)) if message == &action.message => payload.clone(),
+                _ => {
+                    let mut raw = Vec::new();
+                    bincode::DefaultOptions::new()
+                        .with_fixint_encoding()
+                        .with_limit((MAX_FRAME_BYTES - 256) as u64)
+                        .serialize_into(&mut raw, &action.message)?;
+                    self.payloads
+                        .lock()
+                        .map_err(|_| anyhow!("payload cache poisoned"))?
+                        .intern(raw)
+                }
+            };
+            peer.push(payload.clone())?;
+            previous = Some((action.message, payload));
+        }
+        Ok(())
+    }
+}
+
 impl<T> Drop for Endpoint<T> {
     fn drop(&mut self) {
+        for queue in self.outbound.peers.iter() {
+            queue.close();
+        }
         for task in &self.tasks {
             task.abort();
         }
@@ -290,7 +456,7 @@ mod tests {
             id: 1,
             context: [9; 32],
             keys: Arc::new(vec![(0, key.clone())].into_iter().collect()),
-            received: Arc::new(Mutex::new(HashMap::new())),
+            received: Arc::new(vec![(0, Mutex::new(0))].into_iter().collect()),
             tx,
         };
         let mut f = Frame {
@@ -325,6 +491,21 @@ mod tests {
         assert_eq!(rx.recv().await, Some((0, 42)));
     }
     #[test]
+    fn identical_pending_payloads_share_storage_and_completed_ones_expire() {
+        let mut cache = PayloadCache::default();
+        let a = cache.intern(vec![1; 32768]);
+        let b = cache.intern(vec![1; 32768]);
+        assert!(Arc::ptr_eq(&a, &b));
+        let weak = Arc::downgrade(&a);
+        drop(a);
+        drop(b);
+        assert!(weak.upgrade().is_none());
+        for i in 0u32..2048 {
+            cache.intern(i.to_le_bytes().to_vec());
+        }
+        assert!(cache.entries.len() < 1024);
+    }
+    #[test]
     fn malformed_serialization_is_bounded() {
         let mut raw = bincode::serialize(&7u64).unwrap();
         raw.push(1);
@@ -332,3 +513,7 @@ mod tests {
         assert!(decode::<Vec<u8>>(&u64::MAX.to_le_bytes()).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "weighted_tests.rs"]
+mod transport_tests;

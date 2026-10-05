@@ -1,12 +1,12 @@
 use crypto::hash::Hash;
 use serde::{Deserialize, Serialize};
 use types::InstanceId;
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
     Echo(bool),
     Ready(bool),
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtMsg {
     pub instance: InstanceId,
     pub header_id: Hash,

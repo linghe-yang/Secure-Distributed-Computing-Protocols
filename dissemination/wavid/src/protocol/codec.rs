@@ -3,10 +3,14 @@ use anyhow::{ensure, Result};
 use bincode::Options;
 use crypto::{
     hash::{do_hash, Hash},
-    weighted_merkle::{verify, IndexedTree},
+    weighted_merkle::{open_range, pack_range, range_frontier, verify, IndexedTree},
 };
 use reed_solomon_erasure::galois_16::ReedSolomon;
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 use types::{InstanceId, Replica, WeightedMembership};
 
 pub const BLOCK_BYTES: usize = 32;
@@ -25,7 +29,46 @@ pub struct Codec {
     pub positions: Vec<std::ops::Range<usize>>,
     pub context: Hash,
     pub directory_context: Hash,
-    code: ReedSolomon,
+    code: Arc<Coding>,
+}
+enum Coding {
+    Gf8(reed_solomon_erasure::galois_8::ReedSolomon),
+    Gf16(ReedSolomon),
+}
+fn coding(k: usize, m: usize) -> Result<Arc<Coding>> {
+    type Cache = Mutex<HashMap<(usize, usize), Weak<Coding>>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    if let Some(c) = cache.get(&(k, m)).and_then(Weak::upgrade) {
+        return Ok(c);
+    }
+    cache.retain(|_, v| v.strong_count() > 0);
+    let c = Arc::new(if m <= 256 {
+        Coding::Gf8(reed_solomon_erasure::galois_8::ReedSolomon::new(k, m - k)?)
+    } else {
+        Coding::Gf16(ReedSolomon::new(k, m - k)?)
+    });
+    cache.insert((k, m), Arc::downgrade(&c));
+    Ok(c)
+}
+#[derive(Serialize, Deserialize)]
+struct PackedStripe {
+    data: Vec<[u8; 32]>,
+    siblings: Vec<Hash>,
+}
+#[derive(Serialize, Deserialize)]
+struct PackedBundle {
+    version: u8,
+    directory: Vec<Hash>,
+    stripes: Vec<PackedStripe>,
+}
+/// Only the verified decoder constructs this wrapper; caller mutation cannot bypass checks.
+pub(crate) struct VerifiedBundle {
+    pub(crate) bundle: Bundle,
+    pub(crate) root: Hash,
 }
 pub struct Prepared {
     pub root: Hash,
@@ -53,7 +96,7 @@ impl Codec {
         let counts = membership.storage_counts();
         let m: usize = counts.iter().sum();
         let q = file_bytes.max(1).div_ceil(k * BLOCK_BYTES);
-        let code = ReedSolomon::new(k, m - k)?;
+        let code = coding(k, m)?;
         let mut offset = 0;
         let positions = counts
             .iter()
@@ -64,7 +107,8 @@ impl Codec {
             })
             .collect();
         let context = do_hash(&bincode::serialize(&(
-            "wavid/systematic-gf16/v1",
+            "wavid/systematic-adaptive/multiproof/v2",
+            BLOCK_BYTES as u64,
             public_id,
             instance,
             file_bytes as u64,
@@ -90,12 +134,21 @@ impl Codec {
     }
     fn encode_stripe(&self, data: &[[u8; 32]]) -> Result<Vec<[u8; 32]>> {
         ensure!(data.len() == self.k, "source stripe size");
+        if let Coding::Gf8(code) = self.code.as_ref() {
+            let mut shards: Vec<[u8; 32]> = data.to_vec();
+            shards.resize(self.m, [0; 32]);
+            code.encode(&mut shards)?;
+            return Ok(shards);
+        }
         let mut shards: Vec<Vec<[u8; 2]>> = data
             .iter()
             .map(|b| b.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
             .collect();
         shards.extend((self.k..self.m).map(|_| vec![[0; 2]; 16]));
-        self.code.encode(&mut shards)?;
+        match self.code.as_ref() {
+            Coding::Gf16(code) => code.encode(&mut shards)?,
+            Coding::Gf8(_) => unreachable!(),
+        };
         Ok(shards
             .into_iter()
             .map(|s| {
@@ -107,6 +160,50 @@ impl Codec {
                 b
             })
             .collect())
+    }
+    /// Normal network path: build each stripe once and avoid materializing individual paths.
+    pub(crate) fn prepare_packets(&self, data: &[u8]) -> Result<(Hash, Vec<Vec<u8>>)> {
+        ensure!(
+            data.len() == self.file_bytes,
+            "fixed file length differs from descriptor"
+        );
+        let mut bundles: Vec<PackedBundle> = (0..self.k)
+            .map(|_| PackedBundle {
+                version: 2,
+                directory: Vec::new(),
+                stripes: Vec::with_capacity(self.q),
+            })
+            .collect();
+        let mut roots = Vec::with_capacity(self.q);
+        for z in 0..self.q {
+            let mut source = vec![[0u8; 32]; self.k];
+            for (j, block) in source.iter_mut().enumerate() {
+                let start = (z * self.k + j) * BLOCK_BYTES;
+                if start < data.len() {
+                    let end = (start + BLOCK_BYTES).min(data.len());
+                    block[..end - start].copy_from_slice(&data[start..end]);
+                }
+            }
+            let row = self.encode_stripe(&source)?;
+            let tree = IndexedTree::new(self.stripe_context(z), &row);
+            roots.push(tree.root());
+            for (owner, bundle) in bundles.iter_mut().enumerate() {
+                let positions = self.positions[owner].clone();
+                bundle.stripes.push(PackedStripe {
+                    data: row[positions.clone()].to_vec(),
+                    siblings: tree.range_proof(positions.start, positions.len()).unwrap(),
+                });
+            }
+        }
+        let root = IndexedTree::new(self.directory_context, &roots).root();
+        let mut packets = Vec::with_capacity(self.k);
+        for (owner, mut bundle) in bundles.into_iter().enumerate() {
+            bundle.directory = roots.clone();
+            let mut raw = Vec::with_capacity(self.bundle_bytes(owner));
+            bincode::serialize_into(&mut raw, &bundle)?;
+            packets.push(raw);
+        }
+        Ok((root, packets))
     }
     pub fn prepare(&self, data: &[u8]) -> Result<Prepared> {
         ensure!(
@@ -134,14 +231,9 @@ impl Codec {
         let stripes: Vec<_> = rows
             .iter()
             .enumerate()
-            .map(|(z, r)| {
-                IndexedTree::new(
-                    self.stripe_context(z),
-                    &r.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
-                )
-            })
+            .map(|(z, r)| IndexedTree::new(self.stripe_context(z), r))
             .collect();
-        let roots: Vec<_> = stripes.iter().map(|t| t.root().to_vec()).collect();
+        let roots: Vec<_> = stripes.iter().map(|t| t.root()).collect();
         let directory = IndexedTree::new(self.directory_context, &roots);
         let root = directory.root();
         let bundles = (0..self.k)
@@ -172,21 +264,109 @@ impl Codec {
         })
     }
     pub fn bundle_bytes(&self, owner: Replica) -> usize {
-        // bincode fixed-width lengths, two vectors inside Proof, hashes and booleans.
-        let depth = self.m.next_power_of_two().max(2).trailing_zeros() as usize;
-        let fragment = 8 + 32 + 8 + 32 * (depth + 2) + 8 + depth;
-        8 + 32 * self.q + 8 + self.q * (8 + self.counts[owner] * fragment)
+        let frontier = range_frontier(self.m, self.positions[owner].start, self.counts[owner])
+            .unwrap()
+            .len();
+        1 + 8 + 32 * self.q + 8 + self.q * (8 + 32 * self.counts[owner] + 8 + 32 * frontier)
+    }
+    /// Versioned compact wire representation; public single-block openings remain available.
+    pub fn encode_bundle(&self, owner: Replica, bundle: &Bundle) -> Result<Vec<u8>> {
+        ensure!(
+            owner < self.k && bundle.directory.len() == self.q && bundle.stripes.len() == self.q,
+            "bundle geometry"
+        );
+        let mut stripes = Vec::with_capacity(self.q);
+        for stripe in &bundle.stripes {
+            ensure!(
+                stripe.len() == self.counts[owner]
+                    && stripe
+                        .iter()
+                        .zip(self.positions[owner].clone())
+                        .all(|(f, i)| f.index == i),
+                "coordinate geometry"
+            );
+            let proofs: Vec<_> = stripe.iter().map(|f| f.proof.clone()).collect();
+            let siblings = pack_range(self.m, self.positions[owner].start, &proofs)
+                .ok_or_else(|| anyhow::anyhow!("malformed proof"))?;
+            stripes.push(PackedStripe {
+                data: stripe.iter().map(|f| f.data).collect(),
+                siblings,
+            });
+        }
+        let mut raw = Vec::with_capacity(self.bundle_bytes(owner));
+        bincode::serialize_into(
+            &mut raw,
+            &PackedBundle {
+                version: 2,
+                directory: bundle.directory.clone(),
+                stripes,
+            },
+        )?;
+        Ok(raw)
     }
     pub fn decode_bundle(&self, owner: Replica, raw: &[u8]) -> Option<Bundle> {
+        self.decode_verified_bundle(owner, raw, None, None)
+            .map(|v| v.bundle)
+    }
+    pub(crate) fn decode_verified_bundle(
+        &self,
+        owner: Replica,
+        raw: &[u8],
+        expected: Option<Hash>,
+        cached_directory: Option<&[Hash]>,
+    ) -> Option<VerifiedBundle> {
         if owner >= self.k || raw.len() != self.bundle_bytes(owner) {
             return None;
         }
-        bincode::DefaultOptions::new()
+        let packed: PackedBundle = bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .with_limit(raw.len() as u64)
             .reject_trailing_bytes()
             .deserialize(raw)
-            .ok()
+            .ok()?;
+        if packed.version != 2 || packed.directory.len() != self.q || packed.stripes.len() != self.q
+        {
+            return None;
+        }
+        let root = if let (Some(root), Some(directory)) = (expected, cached_directory) {
+            if directory != packed.directory.as_slice() {
+                return None;
+            }
+            root
+        } else {
+            IndexedTree::new(self.directory_context, &packed.directory).root()
+        };
+        if expected.is_some_and(|r| r != root) {
+            return None;
+        }
+        let mut stripes = Vec::with_capacity(self.q);
+        for (z, stripe) in packed.stripes.into_iter().enumerate() {
+            if stripe.data.len() != self.counts[owner] {
+                return None;
+            }
+            let proofs = open_range(
+                self.stripe_context(z),
+                packed.directory[z],
+                self.m,
+                self.positions[owner].start,
+                &stripe.data,
+                &stripe.siblings,
+            )?;
+            stripes.push(
+                self.positions[owner]
+                    .clone()
+                    .zip(stripe.data.into_iter().zip(proofs))
+                    .map(|(index, (data, proof))| Fragment { index, data, proof })
+                    .collect(),
+            );
+        }
+        Some(VerifiedBundle {
+            root,
+            bundle: Bundle {
+                directory: packed.directory,
+                stripes,
+            },
+        })
     }
     pub fn verify_bundle(
         &self,
@@ -232,6 +412,22 @@ impl Codec {
     }
     fn decode_stripe(&self, fragments: &[Fragment]) -> Result<Vec<[u8; 32]>> {
         ensure!(fragments.len() == self.k, "exactly k fragments needed");
+        if let Coding::Gf8(code) = self.code.as_ref() {
+            let mut shards: Vec<Option<Vec<u8>>> = vec![None; self.m];
+            for f in fragments {
+                ensure!(
+                    f.index < self.m && shards[f.index].is_none(),
+                    "duplicate or unknown coordinate"
+                );
+                shards[f.index] = Some(f.data.to_vec());
+            }
+            code.reconstruct_data(&mut shards)?;
+            let source: Vec<[u8; 32]> = shards[..self.k]
+                .iter()
+                .map(|s| s.as_ref().unwrap().as_slice().try_into().unwrap())
+                .collect();
+            return self.encode_stripe(&source);
+        }
         let mut shards: Vec<Option<Vec<[u8; 2]>>> = vec![None; self.m];
         for f in fragments {
             ensure!(
@@ -240,7 +436,10 @@ impl Codec {
             );
             shards[f.index] = Some(f.data.chunks_exact(2).map(|c| [c[0], c[1]]).collect());
         }
-        self.code.reconstruct(&mut shards)?;
+        match self.code.as_ref() {
+            Coding::Gf16(code) => code.reconstruct_data(&mut shards)?,
+            Coding::Gf8(_) => unreachable!(),
+        };
         // Re-encode from the recovered systematic data, including originally supplied parity.
         let source: Vec<_> = shards[..self.k]
             .iter()
@@ -320,12 +519,7 @@ impl Codec {
                 }
                 match self.decode_stripe(&w.fragments) {
                     Ok(rows) => {
-                        IndexedTree::new(
-                            self.stripe_context(w.stripe),
-                            &rows.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
-                        )
-                        .root()
-                            != w.root
+                        IndexedTree::new(self.stripe_context(w.stripe), &rows).root() != w.root
                     }
                     Err(_) => false,
                 }
@@ -345,34 +539,46 @@ impl Codec {
         directory: &[Hash],
         rows: &[BTreeMap<usize, Fragment>],
     ) -> Result<Option<Retrieval>> {
+        self.recover_inner(root, directory, rows, false)
+    }
+    pub(crate) fn recover_verified(
+        &self,
+        root: Hash,
+        directory: &[Hash],
+        rows: &[BTreeMap<usize, Fragment>],
+    ) -> Result<Option<Retrieval>> {
+        self.recover_inner(root, directory, rows, true)
+    }
+    fn recover_inner(
+        &self,
+        root: Hash,
+        directory: &[Hash],
+        rows: &[BTreeMap<usize, Fragment>],
+        verified: bool,
+    ) -> Result<Option<Retrieval>> {
         if rows.len() != self.q || rows.iter().any(|r| r.len() < self.k) {
             return Ok(None);
         }
         ensure!(directory.len() == self.q, "directory size");
-        let tree = IndexedTree::new(
-            self.directory_context,
-            &directory.iter().map(|h| h.to_vec()).collect::<Vec<_>>(),
-        );
+        let tree = IndexedTree::new(self.directory_context, directory);
         ensure!(tree.root() == root, "directory commitment");
         let mut data = Vec::with_capacity(self.q * self.k * 32);
         for z in 0..self.q {
             let fragments: Vec<_> = rows[z].values().take(self.k).cloned().collect();
             ensure!(
-                fragments.iter().all(|f| verify(
-                    self.stripe_context(z),
-                    directory[z],
-                    self.m,
-                    f.index,
-                    &f.data,
-                    &f.proof
-                )),
+                verified
+                    || fragments.iter().all(|f| verify(
+                        self.stripe_context(z),
+                        directory[z],
+                        self.m,
+                        f.index,
+                        &f.data,
+                        &f.proof
+                    )),
                 "unauthenticated recovery coordinate"
             );
             let decoded = self.decode_stripe(&fragments)?;
-            let encoded_tree = IndexedTree::new(
-                self.stripe_context(z),
-                &decoded.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
-            );
+            let encoded_tree = IndexedTree::new(self.stripe_context(z), &decoded);
             if encoded_tree.root() != directory[z] {
                 return Ok(Some(Retrieval::Invalid(StorageFault::Coding(
                     StripeWitness {

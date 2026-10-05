@@ -97,9 +97,9 @@ impl Context {
     }
     pub(crate) async fn flush(&mut self, instance: InstanceId) -> Result<()> {
         if let Some(state) = self.states.get_mut(&instance) {
-            for action in std::mem::take(&mut state.outgoing) {
-                self.network.send(action)?;
-            }
+            self.network
+                .sender()
+                .send_batch(std::mem::take(&mut state.outgoing))?;
             for event in std::mem::take(&mut state.events) {
                 if self.output.send(event).await.is_err() {
                     log::debug!("wbinaa output receiver closed; retaining peer service");

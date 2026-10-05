@@ -104,8 +104,10 @@ impl Context {
     }
     pub(crate) async fn flush(&mut self, instance: InstanceId) -> Result<()> {
         if let Some(state) = self.states.get_mut(&instance) {
-            for action in std::mem::take(&mut state.outgoing) {
-                self.network.send(action)?;
+            let actions = std::mem::take(&mut state.outgoing);
+            if !actions.is_empty() {
+                let sender = self.network.sender();
+                util::weighted_compute::run(move || sender.send_batch(actions)).await??;
             }
             for event in std::mem::take(&mut state.events) {
                 if self.output.send(event).await.is_err() {
