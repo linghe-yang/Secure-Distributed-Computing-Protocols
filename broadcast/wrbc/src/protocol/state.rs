@@ -5,7 +5,7 @@ use types::{InstanceId, SendAction, WeightedMembership};
 /// WRBC introduces no second quorum or network service: every party retrieves WAVID.
 pub struct State {
     pub storage: wavid::State,
-    pub delivered: Option<Vec<u8>>,
+    pub delivered: Option<wavid::ValidatedFile>,
     pub rejected: bool,
     pub outgoing: Vec<SendAction<ProtMsg>>,
     pub events: Vec<Event>,
@@ -18,6 +18,24 @@ impl State {
         public_id: Hash,
         file_bytes: usize,
     ) -> Result<Self> {
+        Self::with_params(
+            membership,
+            id,
+            instance,
+            public_id,
+            file_bytes,
+            Default::default(),
+        )
+    }
+    /// Select the same public coding parameters at all parties (see WAVID CodingParams).
+    pub fn with_params(
+        membership: WeightedMembership,
+        id: usize,
+        instance: InstanceId,
+        public_id: Hash,
+        file_bytes: usize,
+        coding: wavid::CodingParams,
+    ) -> Result<Self> {
         let retrievers = (0..membership.n()).collect();
         let mut storage = wavid::State::new(
             membership,
@@ -25,6 +43,7 @@ impl State {
             instance,
             public_id,
             wavid::Descriptor {
+                coding,
                 file_bytes,
                 root: None,
                 retrievers,

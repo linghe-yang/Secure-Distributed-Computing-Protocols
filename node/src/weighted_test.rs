@@ -19,10 +19,15 @@ pub struct Options {
     pub timeout: Duration,
     pub bits: u32,
     pub payload_bytes: usize,
+    pub block_bytes: usize,
 }
 impl Options {
     pub fn active(&self, config: &Node) -> Result<Vec<usize>> {
         config.validate_weighted()?;
+        wavid::CodingParams {
+            block_bytes: self.block_bytes,
+        }
+        .validate()?;
         ensure!(!self.timeout.is_zero(), "test timeout must be positive");
         ensure!(
             self.bits <= wbinaa::MAX_ROUNDS,
@@ -177,9 +182,10 @@ fn hash_text(hash: &[u8]) -> String {
 fn file_result(
     protocol: &str,
     id: usize,
-    bytes: Vec<u8>,
+    bytes: impl AsRef<[u8]>,
     expected: &[u8],
 ) -> Result<Option<Value>> {
+    let bytes = bytes.as_ref();
     ensure!(bytes == expected, "incorrect test payload");
     let hash = hash_text(&crypto::hash::do_hash(&bytes));
     log::info!(
@@ -190,6 +196,25 @@ fn file_result(
         hash
     );
     Ok(Some(json!({"bytes":bytes.len(), "sha256":hash})))
+}
+
+fn verify_file_openings(codec: &wavid::Codec, file: &wavid::ValidatedFile) -> Result<()> {
+    for block in [0, codec.k - 1, codec.q * codec.k - 1] {
+        ensure!(
+            codec.verify_source(file.root(), &file.open_source(block)?),
+            "invalid recovered source proof"
+        );
+    }
+    let boundary = codec.k * codec.parameters().block_bytes;
+    if file.len() > boundary {
+        for opening in file.open_range(boundary - 1, 2)? {
+            ensure!(
+                codec.verify_source(file.root(), &opening),
+                "invalid cross-stripe proof"
+            );
+        }
+    }
+    Ok(())
 }
 
 pub async fn wra(config: Node, options: Options) -> Result<()> {
@@ -235,6 +260,15 @@ pub async fn wavid(config: Node, options: Options) -> Result<()> {
     let dealer = active[0];
     let instance = InstanceId::new(0, Some(dealer), 0);
     let data = test_payload(options.payload_bytes);
+    let proof_codec = wavid::Codec::with_params(
+        &config.weighted_membership()?,
+        instance,
+        config.weighted_public_id("wavid"),
+        data.len(),
+        wavid::CodingParams {
+            block_bytes: options.block_bytes,
+        },
+    )?;
     let mut requests = vec![wavid::Request::Retrieve { instance }];
     if config.id == dealer {
         requests.push(wavid::Request::Disperse {
@@ -250,6 +284,9 @@ pub async fn wavid(config: Node, options: Options) -> Result<()> {
         wavid::Request::Register {
             instance,
             descriptor: wavid::Descriptor {
+                coding: wavid::CodingParams {
+                    block_bytes: options.block_bytes,
+                },
                 file_bytes: data.len(),
                 root: None,
                 retrievers: active,
@@ -283,7 +320,10 @@ pub async fn wavid(config: Node, options: Options) -> Result<()> {
             wavid::Event::Result {
                 result: wavid::Retrieval::File(bytes),
                 ..
-            } => file_result("WAVID", id, bytes, &data),
+            } => {
+                verify_file_openings(&proof_codec, &bytes)?;
+                file_result("WAVID", id, bytes, &data)
+            }
             wavid::Event::Result {
                 result: wavid::Retrieval::Invalid(_),
                 ..
@@ -299,6 +339,15 @@ pub async fn wrbc(config: Node, options: Options) -> Result<()> {
     let dealer = active[0];
     let instance = InstanceId::new(0, Some(dealer), 0);
     let data = test_payload(options.payload_bytes);
+    let proof_codec = wavid::Codec::with_params(
+        &config.weighted_membership()?,
+        instance,
+        config.weighted_public_id("wrbc"),
+        data.len(),
+        wavid::CodingParams {
+            block_bytes: options.block_bytes,
+        },
+    )?;
     let requests = if config.id == dealer {
         vec![wrbc::Request::Broadcast {
             instance,
@@ -313,6 +362,9 @@ pub async fn wrbc(config: Node, options: Options) -> Result<()> {
         &options,
         wrbc::Context::spawn_with_manifest,
         wrbc::Request::Register {
+            coding: wavid::CodingParams {
+                block_bytes: options.block_bytes,
+            },
             instance,
             file_bytes: data.len(),
         },
@@ -322,7 +374,10 @@ pub async fn wrbc(config: Node, options: Options) -> Result<()> {
                 log::info!("WRBC node {}: registered instance {:?}", id, instance);
                 Ok(None)
             }
-            wrbc::Event::Deliver { data: bytes, .. } => file_result("WRBC", id, bytes, &data),
+            wrbc::Event::Deliver { data: bytes, .. } => {
+                verify_file_openings(&proof_codec, &bytes)?;
+                file_result("WRBC", id, bytes, &data)
+            }
             wrbc::Event::Invalid { .. } => Err(anyhow!("honest WRBC payload rejected")),
             wrbc::Event::Rejected { reason, .. } => Err(anyhow!(reason)),
         },

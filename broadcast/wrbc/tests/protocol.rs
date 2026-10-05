@@ -32,7 +32,7 @@ fn delivery_is_exactly_once_and_empty_is_valid() {
         nodes[0].broadcast(&data).unwrap();
         drive(&mut nodes);
         for s in &nodes {
-            assert_eq!(s.delivered, Some(data.clone()));
+            assert_eq!(s.delivered.as_deref(), Some(data.as_slice()));
             assert_eq!(
                 s.events
                     .iter()

@@ -20,13 +20,14 @@ impl State {
         Ok(())
     }
     pub(crate) fn accept_data(&mut self, verified: crate::protocol::codec::VerifiedBundle) {
-        let bundle = verified.bundle;
         if self.directory.is_none() {
-            self.directory = Some(bundle.directory);
+            self.directory = Some(verified.directory);
         }
-        for (z, stripe) in bundle.stripes.into_iter().enumerate() {
+        for (z, stripe) in verified.stripes.into_iter().enumerate() {
             for fragment in stripe {
-                self.rows[z].entry(fragment.index).or_insert(fragment);
+                if self.rows[z].len() < self.codec.k {
+                    self.rows[z].entry(fragment.index()).or_insert(fragment);
+                }
             }
         }
     }
@@ -57,7 +58,7 @@ impl State {
             }
             if self.asked && self.result.is_none() {
                 if let Some(directory) = &self.directory {
-                    match self.codec.recover_verified(root, directory, &self.rows) {
+                    match self.codec.recover_verified(root, directory, &mut self.rows) {
                         Ok(Some(result)) => {
                             self.result = Some(result.clone());
                             self.events.push(Event::Result {

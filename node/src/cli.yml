@@ -87,3 +87,8 @@ args:
         help: Deterministic WAVID and WRBC test file size in bytes
         takes_value: true
         default_value: "65536"
+    - test_block_bytes:
+        long: test-block-bytes
+        help: Public WAVID/WRBC source block bytes; even 32..4096, must agree at every node
+        takes_value: true
+        default_value: "32"

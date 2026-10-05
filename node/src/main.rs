@@ -22,6 +22,7 @@ fn weighted_options(args: &ArgMatches<'_>) -> Result<Options> {
         timeout: Duration::from_secs(args.value_of("test_timeout").unwrap().parse()?),
         bits: args.value_of("test_bits").unwrap().parse()?,
         payload_bytes: args.value_of("test_payload_bytes").unwrap().parse()?,
+        block_bytes: args.value_of("test_block_bytes").unwrap().parse()?,
     })
 }
 

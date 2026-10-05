@@ -9,6 +9,7 @@ fn early_packet_waits_for_authenticated_root() {
     let prepared = codec.prepare(&data).unwrap();
     let root = prepared.root;
     let descriptor = Descriptor {
+        coding: Default::default(),
         file_bytes: data.len(),
         root: None,
         retrievers: vec![1],

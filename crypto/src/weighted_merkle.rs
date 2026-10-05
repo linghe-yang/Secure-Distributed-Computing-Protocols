@@ -46,6 +46,7 @@ impl Hasher {
 pub fn leaf(context: Hash, count: usize, index: usize, value: &[u8]) -> Hash {
     Hasher::new(context, count).leaf(index, value)
 }
+#[derive(Debug)]
 pub struct IndexedTree {
     nodes: Vec<Hash>,
     pub count: usize,
@@ -201,7 +202,45 @@ pub fn range_frontier(count: usize, start: usize, len: usize) -> Option<Vec<usiz
     }
     Some(frontier.into_iter().collect())
 }
-/// Verify a multiproof once, then materialize legacy openings for public fault certificates.
+/// Verified shared tree nodes for one contiguous range. Fields are private: only
+/// successful verification can construct this object. Leaf positions and root
+/// are retained, so exporting a path never needs a remote peer or a new tree.
+#[derive(Debug)]
+pub struct VerifiedRange {
+    width: usize,
+    start: usize,
+    len: usize,
+    root: Hash,
+    nodes: Vec<(usize, Hash)>,
+}
+impl VerifiedRange {
+    pub fn proof(&self, index: usize) -> Option<Proof> {
+        if index < self.start || index >= self.start + self.len {
+            return None;
+        }
+        let get = |p| {
+            self.nodes
+                .binary_search_by_key(&p, |n| n.0)
+                .ok()
+                .map(|i| self.nodes[i].1)
+        };
+        let mut pos = self.width + index;
+        let mut lemma = vec![get(pos)?];
+        let mut path = Vec::new();
+        while pos > 1 {
+            lemma.push(get(pos ^ 1)?);
+            path.push(pos & 1 == 0);
+            pos /= 2;
+        }
+        lemma.push(self.root);
+        Some(Proof::new(lemma, path))
+    }
+    /// Number of retained hashes (without per-leaf duplicated paths).
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+}
+/// Compatibility API: verify once and explicitly export independent paths.
 pub fn open_range<V: AsRef<[u8]>>(
     context: Hash,
     root: Hash,
@@ -210,6 +249,20 @@ pub fn open_range<V: AsRef<[u8]>>(
     values: &[V],
     siblings: &[Hash],
 ) -> Option<Vec<Proof>> {
+    let shared = verify_range(context, root, count, start, values, siblings)?;
+    (start..start + values.len())
+        .map(|i| shared.proof(i))
+        .collect()
+}
+/// Verify a canonical multiproof while retaining shared nodes instead of expanded paths.
+pub fn verify_range<V: AsRef<[u8]>>(
+    context: Hash,
+    root: Hash,
+    count: usize,
+    start: usize,
+    values: &[V],
+    siblings: &[Hash],
+) -> Option<VerifiedRange> {
     let frontier = range_frontier(count, start, values.len())?;
     if frontier.len() != siblings.len() {
         return None;
@@ -236,20 +289,13 @@ pub fn open_range<V: AsRef<[u8]>>(
     if nodes.get(&1)? != &root {
         return None;
     }
-    (start..start + values.len())
-        .map(|i| {
-            let mut pos = width + i;
-            let mut lemma = vec![*nodes.get(&pos)?];
-            let mut path = vec![];
-            while pos > 1 {
-                lemma.push(*nodes.get(&(pos ^ 1))?);
-                path.push(pos & 1 == 0);
-                pos /= 2;
-            }
-            lemma.push(root);
-            Some(Proof::new(lemma, path))
-        })
-        .collect()
+    Some(VerifiedRange {
+        width,
+        start,
+        len: values.len(),
+        root,
+        nodes: nodes.into_iter().collect(),
+    })
 }
 /// Extract a canonical frontier from individual openings without changing the tree.
 pub fn pack_range(count: usize, start: usize, proofs: &[Proof]) -> Option<Vec<Hash>> {
@@ -276,6 +322,32 @@ pub fn pack_range(count: usize, start: usize, proofs: &[Proof]) -> Option<Vec<Ha
 #[cfg(test)]
 mod optimized_tests {
     use super::*;
+    #[test]
+    fn shared_range_uses_fewer_hashes_than_expanded_paths() {
+        let values = vec![[9; 32]; 192];
+        let tree = IndexedTree::new([7; 32], &values);
+        let shared = verify_range(
+            [7; 32],
+            tree.root(),
+            192,
+            0,
+            &values[..64],
+            &tree.range_proof(0, 64).unwrap(),
+        )
+        .unwrap();
+        let expanded: usize = (0..64).map(|i| tree.proof(i).lemma().len()).sum();
+        assert!(shared.node_count() * 3 < expanded);
+        for i in 0..64 {
+            let path = shared.proof(i).unwrap();
+            assert_eq!(path.lemma(), tree.proof(i).lemma());
+            assert_eq!(path.path(), tree.proof(i).path());
+        }
+        assert!(shared.proof(64).is_none());
+        println!(
+            "shared_hashes={} expanded_hashes={expanded}",
+            shared.node_count()
+        );
+    }
     #[test]
     fn hashes_preserve_bincode_commitments() {
         let context = [13; 32];

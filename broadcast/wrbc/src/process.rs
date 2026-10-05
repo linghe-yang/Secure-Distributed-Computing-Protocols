@@ -25,19 +25,22 @@ impl Context {
         let registering = matches!(&request, Request::Register { .. });
         let result: Result<()> = async {
             match request {
-                Request::Register { file_bytes, .. } => {
+                Request::Register {
+                    file_bytes, coding, ..
+                } => {
                     ensure!(
                         !self.states.contains_key(&instance) && self.states.len() < MAX_INSTANCES,
                         "duplicate registration or instance limit"
                     );
                     self.states.insert(
                         instance,
-                        State::new(
+                        State::with_params(
                             self.membership.clone(),
                             self.id,
                             instance,
                             self.network.public_id,
                             file_bytes,
+                            coding,
                         )?,
                     );
                 }

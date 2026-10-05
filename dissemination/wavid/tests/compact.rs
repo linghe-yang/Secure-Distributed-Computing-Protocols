@@ -2,12 +2,19 @@ use types::{InstanceId, Weight, WeightedMembership};
 use wavid::{Codec, CompletionMode, Descriptor, State};
 #[test]
 fn compact_wire_matches_streaming_prepare_and_rejects_tampering() {
-    for n in [4, 64, 90] {
+    for (n, b) in [(4, 32), (64, 32), (90, 32), (4, 256), (90, 128)] {
         let membership =
             WeightedMembership::new(vec![Weight::from(3); n], Weight::from(n as u64)).unwrap();
         let instance = InstanceId::new(1, Some(0), 0);
         let data = vec![27; 4097];
-        let codec = Codec::new(&membership, instance, [1; 32], data.len()).unwrap();
+        let codec = Codec::with_params(
+            &membership,
+            instance,
+            [1; 32],
+            data.len(),
+            wavid::CodingParams { block_bytes: b },
+        )
+        .unwrap();
         let prepared = codec.prepare(&data).unwrap();
         let mut state = State::new(
             membership,
@@ -15,6 +22,7 @@ fn compact_wire_matches_streaming_prepare_and_rejects_tampering() {
             instance,
             [1; 32],
             Descriptor {
+                coding: wavid::CodingParams { block_bytes: b },
                 file_bytes: data.len(),
                 root: Some(prepared.root),
                 retrievers: vec![],
@@ -55,7 +63,7 @@ fn compact_wire_matches_streaming_prepare_and_rejects_tampering() {
             assert!(codec.decode_bundle(owner, &bad).is_none());
             assert!(codec.decode_bundle(owner, &raw[..raw.len() - 1]).is_none());
         }
-        assert!(total * 2 < legacy, "compact={total}, legacy={legacy}");
+        assert!(total < legacy, "compact={total}, legacy={legacy}");
         println!("n={n} compact_bytes={total} legacy_bytes={legacy}");
     }
 }

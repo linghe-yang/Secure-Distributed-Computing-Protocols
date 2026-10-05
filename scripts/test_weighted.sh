@@ -21,6 +21,7 @@ num_nodes="${#weight_array[@]}"
 test_timeout="${TEST_TIMEOUT:-40}"
 bits="${BINAA_BITS:-8}"
 payload_bytes="${PAYLOAD_BYTES:-65536}"
+block_bytes="${BLOCK_BYTES:-32}"
 log_root="${LOG_DIR:-logs/weighted}"
 mkdir -p -- "$log_root"
 test_directory="$(mktemp -d "$log_root/$(date +%Y%m%d-%H%M%S)-XXXXXXXX")"
@@ -62,7 +63,7 @@ for component in "${protocols[@]}"; do
     mkdir -p -- "$result_directory"
     pids=()
     for id in "${launch_order[@]}"; do
-        ./target/"$build_type"/node "${verbosity[@]}" --config "$config_directory/nodes-$id.json" --protocol "$component" --test-absent "$absent" --test-timeout "$test_timeout" --test-bits "$bits" --test-payload-bytes "$payload_bytes" --test-result "$result_directory/node-$id.json" > "$test_directory/$component/node-$id.log" 2>&1 &
+        ./target/"$build_type"/node "${verbosity[@]}" --config "$config_directory/nodes-$id.json" --protocol "$component" --test-absent "$absent" --test-timeout "$test_timeout" --test-bits "$bits" --test-payload-bytes "$payload_bytes" --test-block-bytes "$block_bytes" --test-result "$result_directory/node-$id.json" > "$test_directory/$component/node-$id.log" 2>&1 &
         pids+=("$!")
         printf "%s %s\n" "$id" "$!" >> "$test_directory/$component/pids.txt"
         if [[ "${START_DELAY:-0}" != 0 ]]; then sleep "$START_DELAY"; fi

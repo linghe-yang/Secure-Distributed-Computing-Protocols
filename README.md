@@ -189,7 +189,7 @@ of 3 with T=4 allow one corrupt node in the weighted protocols.
 | --- | --- | --- |
 | wra | consensus/wra | Register(header_id), Input(bit); Output(bit) |
 | wavid | dissemination/wavid | Register(descriptor), Disperse, Retrieve; Stored, Complete, Result(File/Invalid) |
-| wrbc | broadcast/wrbc | Register(file_bytes), Broadcast; Deliver(file) |
+| wrbc | broadcast/wrbc | Register(file_bytes, coding), Broadcast; Deliver(ValidatedFile) |
 | wgather | consensus/wgather | Register, Start, Add(verified dealer); DeliverSet |
 | wbinaa | consensus/wbinaa | Register(exact precision), Start(binary vector); DeliverVector |
 
@@ -214,8 +214,8 @@ and dealers; do not start another listener for each instance.
 
 WAVID separates storage completion from retrieval. It assigns node i exactly
 ceil(3*n*w_i/W) coding coordinates, so arbitrary numerical weights do not expand into
-virtual nodes. Systematic GF(2^16) Reed-Solomon coding uses k=n and stripes of 32-byte
-source blocks, with an authenticated directory and indexed proofs. Messages are
+virtual nodes. Systematic Reed-Solomon coding uses k=n and caller-selected source blocks
+(default 32 bytes), with an authenticated directory and indexed proofs. Messages are
 chunked at 32 KiB. Retrieval re-encodes recovered sources and checks the commitment;
 inconsistent coding or nonzero padding produces a publicly verifiable StorageFault,
 not a timeout-derived invalid result. Codec exposes source openings and fault
@@ -319,6 +319,7 @@ Test settings can be supplied through environment variables:
 | START_ORDER | active IDs in ascending order | Comma-separated permutation of all active node IDs |
 | START_DELAY | 0 | Seconds between launching consecutive processes |
 | PAYLOAD_BYTES | 65536 | WAVID/WRBC deterministic file size; zero tests empty files |
+| BLOCK_BYTES | 32 | Public source/coding block size for WAVID/WRBC; even 32..4096, identical at every node |
 | BINAA_BITS | 8 | Requested precision 2^(-bits) |
 | TEST_TIMEOUT | 40 | Seconds allowed for each node to produce a result |
 | BASE_PORT | 24500 | First participant TCP port |
@@ -379,7 +380,7 @@ cargo run -p genconfig -- --NumNodes 4 --blocksize 100 --delay 100 \
 When --weights is supplied and --weight-threshold is omitted, T defaults to floor(W/3).
 Review that exclusive bound against the intended corruption model before deployment.
 
-### Weighted transport and storage optimization (v2)
+### Weighted transport and storage optimization
 
 Weighted endpoints enable TCP_NODELAY on both accepted and outgoing sockets, including
 reconnects, and coalesce frame lengths and bodies. A peer sends at most 32 frames per
@@ -396,9 +397,9 @@ disk exhaustion is reported as an I/O error. Spooling is not restart persistence
 Identical pending payloads share immutable buffers; adjacent broadcast actions are
 serialized once. Frame authentication feeds the header and payload separately into HMAC.
 
-WAVID/WRBC use version-2 compact storage packets with one canonical Merkle multiproof
+WAVID/WRBC use version-3 compact storage packets with one canonical Merkle multiproof
 per owner and stripe. Individual source openings and public fault certificates retain
-their existing 32-byte block API. SHA-256 leaf/branch input bytes are unchanged; cached
+the two-level indexed proof structure; block payloads are now variable-length Vec<u8>. SHA-256 leaf/branch input bytes are unchanged; cached
 prefix states and borrowed leaves remove repeated allocation and prefix hashing.
 The regular dispersal path prepares compact packets stripe by stripe, without producing
 and rechecking an individual opening for every stored coordinate. The checked public
@@ -406,13 +407,13 @@ Prepared API remains available. Only internally verified recovery coordinates by
 repeated path verification; reconstruction still re-encodes and compares the full stripe
 commitment and checks padding before delivering a file.
 
-The coding backend uses GF(2^8) for at most 256 coordinates and GF(2^16) otherwise.
+The coding backend uses GF(2^8) for fewer than 256 coordinates and GF(2^16) otherwise.
 Coding matrices are shared across instances with identical geometry; recovery reconstructs
 systematic data before the required re-encoding check. **Coding contexts and storage wire
 format changed: upgrade all WAVID/WRBC participants together and regenerate commitments;
-old prepared roots/storage packets cannot be reused.** Bulk chunks remain 32 KiB and source
-blocks remain 32 bytes. Larger source blocks are not enabled because the downstream coin
-uses block-granular source/fault proofs.
+old prepared roots/storage packets cannot be reused.** Bulk chunks remain 32 KiB. Source
+block size is a separate immutable public parameter, described below. The field size
+satisfies the paper's strict 2^f > m requirement.
 
 WAVID/WRBC state transitions and large outgoing flushes execute on a blocking worker pool
 with a process-wide CPU budget capped at four jobs. State ownership remains serialized
@@ -452,3 +453,75 @@ are excluded from these storage-layout counts.
 The validation run also completed a separate 64 MiB WRBC transfer with weights
 5,3,2,1, T=3 and node 3 silent (three active processes). The 64-process matrix
 uses 64 KiB files; these are separate scale cases.
+
+### Caller-selected coding and on-demand proofs (v3)
+
+Set `Descriptor.coding = CodingParams { block_bytes: 64 }` for WAVID, or set
+`coding` in WRBC Register. Values must be even and in 32..=4096;
+`CodingParams::default()` chooses 32. The layout is included in the commitment
+context alongside the public/session context, instance, length, k, m, and ownership
+counts. All participants must agree before registration. This is independent of
+the 32 KiB network chunk size and local scheduling. Choose 32/64/128/256 according
+to the upper layer's canonical short fields. Increasing blocks reduces stripe and
+directory overhead but enlarges source openings and the k-block coding-fault
+witness. To retain the paper's bounds, keep b proportional to lambda + log n; the
+4096-byte resource cap is not itself a complexity guarantee.
+
+WAVID Retrieval::File and WRBC Event::Deliver now return `ValidatedFile`. Clones
+share one immutable file, directory, codec, and one cached stripe tree. Read bytes
+through `as_ref()`; `into_vec()` moves if uniquely owned and otherwise copies.
+`root()`, `parameters()`, and `coding_context()` identify the commitment.
+`open_source(block_index)` produces independent source/directory proofs, including
+padding blocks. `open_range(offset, len)` opens every source block covering a
+field, even across stripe boundaries. The caller still checks canonical field
+offsets and semantics. A silent original holder is not needed after recovery.
+
+Dealer applications can call `Codec::with_params(...)`, then
+`codec.commit_file(canonical_bulk)` to obtain a root and private-input source
+openings without retaining all bundles or trees. Authenticate that root and the
+coding parameters in the upper-layer header, then disperse those same bytes in
+the same public context. To reopen saved data, use `codec.validate_file(root,
+bytes)`. The eager `prepare()` / `Prepared` API remains for diagnostics and
+malformed-dealer tests and deliberately retains the full encoding. The coin
+layout, private-input checks, semantic proofs, and final canonical re-encoding
+remain the upper layer's responsibility.
+
+Received multiproofs retain shared authenticated nodes and flat block buffers.
+Paths are materialized only for explicit exports or public fault certificates.
+Storage-only verification releases temporary proof nodes after each stripe.
+Recovery selects at most k coordinates per stripe and frees its evidence after
+decoding, full re-encoding/root comparison, and padding validation. A failed
+stripe exports its original received paths, never paths from a different root.
+Successful files regenerate proofs from their source bytes and directory.
+Holder packets and authorized late-service obligations remain after local output.
+
+Preparation writes each encoded stripe into final owner packet buffers, avoiding
+a second full set of bundle objects and per-block wire lengths. These changes
+reduce copies and proof retention; they do **not** make overall WAVID RAM
+independent of file size. Source/output data, owner packets, incoming assemblies,
+and concurrent instances still occupy RAM. Only the existing transport overflow
+queue uses disk.
+
+**Migration:** add `coding: Default::default()` to WAVID Descriptor and WRBC
+Register literals. Fragment.data and Prepared.rows now use Vec<u8> blocks. Use
+as_ref() for file bytes or retain ValidatedFile for proofs. V3 changes the coding
+domain and packet version: upgrade all nodes together and regenerate roots,
+packets, and persisted certificates. The indexed SHA-256 Merkle algorithm and
+two-level proof structure are preserved.
+
+```bash
+bash scripts/test_weighted_proofs.sh
+BLOCK_BYTES=128 PAYLOAD_BYTES=1048576 bash scripts/test_wavid.sh
+```
+
+The proof matrix runs WAVID and WRBC with 32/64/256/4096-byte blocks, one silent
+holder, reversed startup, empty files, 8 MiB WRBC, and 64 configured participants
+with one silent node. Each process checks source openings after output. Unit
+tests cover byte equality of eager/lazy proofs, cross-stripe fields, GF8/GF16,
+invalid parameters, root isolation, coding/padding witnesses, and shared buffers.
+
+The shared-range regression retains 131 hashes for 64 adjacent coordinates in a
+192-leaf stripe, versus 640 hashes across independent paths (79.5% fewer hash
+entries; this is not a whole-process RSS measurement). File-handle clone tests
+check that the underlying source allocation is shared. Encoding scratch space
+uses contiguous stripes, avoiding one heap allocation per coding coordinate.

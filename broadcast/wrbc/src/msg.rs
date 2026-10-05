@@ -5,6 +5,8 @@ pub enum Request {
     Register {
         instance: InstanceId,
         file_bytes: usize,
+        /// Public layout; identical at every node, bound into the WAVID root.
+        coding: wavid::CodingParams,
     },
     Broadcast {
         instance: InstanceId,
@@ -25,7 +27,7 @@ pub enum Event {
     },
     Deliver {
         instance: InstanceId,
-        data: Vec<u8>,
+        data: wavid::ValidatedFile,
     },
     Invalid {
         instance: InstanceId,

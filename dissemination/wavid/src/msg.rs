@@ -4,7 +4,7 @@ use types::{InstanceId, Replica};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Fragment {
     pub index: usize,
-    pub data: [u8; 32],
+    pub data: Vec<u8>,
     pub proof: Proof,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,9 +33,15 @@ pub enum CompletionMode {
 /// External completion is used when the application combines storage with private-share receipts via WRA.
 #[derive(Clone, Debug)]
 pub struct Descriptor {
+    /// Public immutable coding geometry; must agree at all nodes before dispersal.
+    pub coding: crate::CodingParams,
+    /// Exact canonical source length, excluding WAVID padding; 0..=MAX_FILE_BYTES.
     pub file_bytes: usize,
+    /// Authenticated directory root; External mode permits a later Pin.
     pub root: Option<Hash>,
+    /// Authorized physical IDs; append later via Authorize, never revoke.
     pub retrievers: Vec<Replica>,
+    /// Storage for standalone use; External for application-validated joint completion.
     pub completion: CompletionMode,
 }
 #[derive(Clone, Debug)]
@@ -98,7 +104,7 @@ pub enum StorageFault {
 }
 #[derive(Clone, Debug)]
 pub enum Retrieval {
-    File(Vec<u8>),
+    File(crate::ValidatedFile),
     Invalid(StorageFault),
 }
 #[derive(Clone, Debug)]

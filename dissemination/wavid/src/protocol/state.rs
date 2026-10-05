@@ -1,6 +1,4 @@
-use crate::{
-    Codec, CompletionMode, Descriptor, Event, Fragment, Kind, ProtMsg, Retrieval, CHUNK_BYTES,
-};
+use crate::{Codec, CompletionMode, Descriptor, Event, Kind, ProtMsg, Retrieval, CHUNK_BYTES};
 use anyhow::{ensure, Result};
 use crypto::hash::Hash;
 use num_bigint::BigUint;
@@ -60,7 +58,7 @@ pub struct State {
     pub(crate) unpinned_packet: Option<Vec<u8>>,
     pub(crate) stored_packet: Option<std::sync::Arc<Vec<u8>>>,
     pub(crate) directory: Option<Vec<Hash>>,
-    pub(crate) rows: Vec<BTreeMap<usize, Fragment>>,
+    pub(crate) rows: Vec<BTreeMap<usize, super::codec::StoredFragment>>,
     pub(crate) acks: HashMap<Replica, Hash>,
     pub(crate) readies: HashMap<Replica, Hash>,
     pub ack_weights: BTreeMap<Hash, BigUint>,
@@ -84,7 +82,13 @@ impl State {
         membership
             .weight(descriptor.retrievers.iter().copied())
             .map_err(anyhow::Error::msg)?;
-        let codec = Codec::new(&membership, instance, public_id, descriptor.file_bytes)?;
+        let codec = Codec::with_params(
+            &membership,
+            instance,
+            public_id,
+            descriptor.file_bytes,
+            descriptor.coding,
+        )?;
         ensure!(
             (0..membership.n())
                 .all(|p| codec.bundle_bytes(p).div_ceil(CHUNK_BYTES) <= u32::MAX as usize),
@@ -173,12 +177,11 @@ impl State {
         Ok(())
     }
     fn store_packet(&mut self, raw: Vec<u8>) {
-        if let Some(verified) =
-            self.codec
-                .decode_verified_bundle(self.id, &raw, self.descriptor.root, None)
+        if let Some(root) = self
+            .codec
+            .verify_packet(self.id, &raw, self.descriptor.root)
         {
             {
-                let root = verified.root;
                 self.stored_root = Some(root);
                 self.stored_packet = Some(std::sync::Arc::new(raw));
                 self.events.push(Event::Stored {

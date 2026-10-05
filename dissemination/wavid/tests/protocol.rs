@@ -23,6 +23,7 @@ fn states(
                 inst,
                 [8; 32],
                 Descriptor {
+                    coding: Default::default(),
                     file_bytes: data.len(),
                     root,
                     retrievers: (0..m.n()).collect(),
@@ -112,6 +113,7 @@ fn late_authorization_after_output_is_served() {
                 inst,
                 [8; 32],
                 Descriptor {
+                    coding: Default::default(),
                     file_bytes: data.len(),
                     root: None,
                     retrievers: vec![0, 1, 2],
@@ -209,7 +211,7 @@ fn systematic_sources_padding_and_gf16_capacity() {
         1,
     )
     .unwrap();
-    let p = small.commit_rows(vec![vec![[1; 32]; small.m]]).unwrap();
+    let p = small.commit_rows(vec![vec![vec![1; 32]; small.m]]).unwrap();
     let mut rows = vec![BTreeMap::new()];
     for bundle in &p.bundles {
         for f in &bundle.stripes[0] {

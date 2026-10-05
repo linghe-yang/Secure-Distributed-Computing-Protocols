@@ -154,18 +154,18 @@ async fn run() -> Result<()> {
             },
             "wavid"=>{
                 let instance=InstanceId::new(0,Some(dealer),0);let data=b"weighted AVID integration payload".to_vec();
-                exercise(&configs,&active,wavid::Context::spawn,|_|wavid::Request::Register{instance,descriptor:wavid::Descriptor{file_bytes:data.len(),root:None,retrievers:active.clone(),completion:wavid::CompletionMode::Storage}},
+                exercise(&configs,&active,wavid::Context::spawn,|_|wavid::Request::Register{instance,descriptor:wavid::Descriptor{coding: Default::default(),file_bytes:data.len(),root:None,retrievers:active.clone(),completion:wavid::CompletionMode::Storage}},
                     |id|{let mut r=vec![wavid::Request::Retrieve{instance}];if id==dealer{r.push(wavid::Request::Disperse{instance,data:data.clone()});}r},
                     |e|matches!(e,wavid::Event::Registered{..}),|e|match e{
-                        wavid::Event::Result{result:wavid::Retrieval::File(bytes),..}=>{ensure!(bytes==data,"incorrect retrieved file");Ok(Some(json!(String::from_utf8(bytes)?)))},
+                        wavid::Event::Result{result:wavid::Retrieval::File(bytes),..}=>{ensure!(bytes==data,"incorrect retrieved file");Ok(Some(json!(String::from_utf8(bytes.into_vec())?)))},
                         wavid::Event::Result{result:wavid::Retrieval::Invalid(_),..}=>Err(anyhow!("honest file rejected")),wavid::Event::Rejected{reason,..}=>Err(anyhow!(reason)),_=>Ok(None)
                     }).await
             },
             "wrbc"=>{
                 let instance=InstanceId::new(0,Some(dealer),0);let data=b"weighted RBC integration payload".to_vec();
-                exercise(&configs,&active,wrbc::Context::spawn,|_|wrbc::Request::Register{instance,file_bytes:data.len()},|id|if id==dealer{vec![wrbc::Request::Broadcast{instance,data:data.clone()}]}else{vec![]},
+                exercise(&configs,&active,wrbc::Context::spawn,|_|wrbc::Request::Register{coding: Default::default(),instance,file_bytes:data.len()},|id|if id==dealer{vec![wrbc::Request::Broadcast{instance,data:data.clone()}]}else{vec![]},
                     |e|matches!(e,wrbc::Event::Registered{..}),|e|match e{
-                        wrbc::Event::Deliver{data:bytes,..}=>{ensure!(bytes==data,"incorrect RBC delivery");Ok(Some(json!(String::from_utf8(bytes)?)))},
+                        wrbc::Event::Deliver{data:bytes,..}=>{ensure!(bytes==data,"incorrect RBC delivery");Ok(Some(json!(String::from_utf8(bytes.into_vec())?)))},
                         wrbc::Event::Invalid{..}=>Err(anyhow!("honest RBC rejected")),wrbc::Event::Rejected{reason,..}=>Err(anyhow!(reason)),_=>Ok(None)
                     }).await
             },
