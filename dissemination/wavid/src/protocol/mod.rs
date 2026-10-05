@@ -10,3 +10,5 @@ mod parameters;
 pub use parameters::*;
 mod file;
 pub use file::*;
+
+mod stream;

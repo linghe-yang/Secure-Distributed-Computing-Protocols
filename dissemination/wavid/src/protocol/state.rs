@@ -54,10 +54,10 @@ pub struct State {
     pub outgoing: Vec<SendAction<ProtMsg>>,
     pub events: Vec<Event>,
     pub(crate) init: Assembly,
-    pub(crate) data_slots: HashMap<Replica, Assembly>,
+    pub(crate) data_slots: HashMap<Replica, super::stream::DataStream>,
     pub(crate) unpinned_packet: Option<Vec<u8>>,
     pub(crate) stored_packet: Option<std::sync::Arc<Vec<u8>>>,
-    pub(crate) directory: Option<Vec<Hash>>,
+    pub(crate) recovery: Option<super::stream::Recovery>,
     pub(crate) rows: Vec<BTreeMap<usize, super::codec::StoredFragment>>,
     pub(crate) acks: HashMap<Replica, Hash>,
     pub(crate) readies: HashMap<Replica, Hash>,
@@ -113,7 +113,7 @@ impl State {
             data_slots: HashMap::new(),
             unpinned_packet: None,
             stored_packet: None,
-            directory: None,
+            recovery: None,
             rows,
             acks: HashMap::new(),
             readies: HashMap::new(),
@@ -234,21 +234,13 @@ impl State {
                 }
             }
             Kind::Data { index, bytes } if self.asked && self.result.is_none() => {
-                let size = self.codec.bundle_bytes(sender);
-                if let Some(raw) = self
-                    .data_slots
-                    .entry(sender)
-                    .or_insert_with(|| Assembly::new(size))
-                    .add(index, bytes)
-                {
-                    if let Some(bundle) = self.codec.decode_verified_bundle(
-                        sender,
-                        &raw,
-                        self.completed_root,
-                        self.directory.as_deref(),
-                    ) {
-                        self.accept_data(bundle);
-                    }
+                let mut stream = self.data_slots.remove(&sender).unwrap_or_else(|| {
+                    super::stream::DataStream::new(self.codec.bundle_bytes(sender))
+                });
+                stream.add(index, bytes);
+                self.accept_stream(sender, &mut stream);
+                if self.result.is_none() {
+                    self.data_slots.insert(sender, stream);
                 }
             }
             _ => {}

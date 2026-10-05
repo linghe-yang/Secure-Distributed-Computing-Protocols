@@ -264,3 +264,121 @@ async fn closing_queue_releases_storage_and_rejects_late_send() {
     assert!(q.push(Arc::new(vec![2; 32])).is_err());
     assert!(q.pop().await.is_err());
 }
+
+#[tokio::test]
+async fn sliding_window_refills_after_one_ack_and_replays_only_unacknowledged_frames() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let queue = Arc::new(queue::Queue::default());
+        for value in 1u64..=64 {
+            queue
+                .push(Arc::new(bincode::serialize(&value).unwrap()))
+                .unwrap();
+        }
+        let task = tokio::spawn(sender::send_peer(
+            queue.clone(),
+            listener.local_addr().unwrap(),
+            [9; 32],
+            0,
+            1,
+            vec![7; 32],
+        ));
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut received = Vec::new();
+        for sequence in 1..=32 {
+            let f = read_frame(&mut socket).await;
+            assert_eq!(f.sequence, sequence);
+            received.push(f);
+        }
+        // A full window cannot send frame 33 without an authenticated ACK.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), socket.read_u8())
+                .await
+                .is_err()
+        );
+        let ack = ack_mac(&received[0], &[7; 32]);
+        socket.write_all(&ack[..7]).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), socket.read_u8())
+                .await
+                .is_err()
+        );
+        socket.write_all(&ack[7..]).await.unwrap();
+        // The old batch barrier deadlocks here: ACKs 2..32 have not been sent.
+        let f33 = read_frame(&mut socket).await;
+        assert_eq!(f33.sequence, 33);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), socket.read_u8())
+                .await
+                .is_err()
+        );
+        let ack2 = ack_mac(&received[1], &[7; 32]);
+        socket.write_all(&ack2[..13]).await.unwrap();
+        drop(socket);
+        let (mut socket, _) = listener.accept().await.unwrap();
+        // ACK 1 was committed; the partial ACK 2 must be discarded on reconnect.
+        for sequence in 2..=33 {
+            let f = read_frame(&mut socket).await;
+            assert_eq!(f.sequence, sequence);
+            let expected = if sequence == 33 {
+                &f33
+            } else {
+                &received[sequence as usize - 1]
+            };
+            assert_eq!(encode_frame(&f).unwrap(), encode_frame(expected).unwrap());
+            socket.write_all(&ack_mac(&f, &[7; 32])).await.unwrap();
+        }
+        for sequence in 34..=64 {
+            let f = read_frame(&mut socket).await;
+            assert_eq!(f.sequence, sequence);
+            socket.write_all(&ack_mac(&f, &[7; 32])).await.unwrap();
+        }
+        queue.close();
+        let _ = task.await;
+    })
+    .await
+    .expect("sliding window failed to refill or reconnect");
+}
+
+#[tokio::test]
+async fn partial_ack_survives_new_queue_work_and_partial_large_writes() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let queue = Arc::new(queue::Queue::default());
+        queue
+            .push(Arc::new(vec![1; MAX_FRAME_BYTES - 256]))
+            .unwrap();
+        let task = tokio::spawn(sender::send_peer(
+            queue.clone(),
+            listener.local_addr().unwrap(),
+            [9; 32],
+            0,
+            1,
+            vec![7; 32],
+        ));
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let first = read_frame(&mut socket).await;
+        let ack = ack_mac(&first, &[7; 32]);
+        socket.write_all(&ack[..11]).await.unwrap();
+        // Queue wakeup and writes compete with the outstanding partial ACK read.
+        queue
+            .push(Arc::new(vec![2; MAX_FRAME_BYTES - 256]))
+            .unwrap();
+        let second = read_frame(&mut socket).await;
+        assert_eq!(second.sequence, 2);
+        assert_eq!(second.mac, frame_mac(&second, &[7; 32]));
+        let mut rest = ack[11..].to_vec();
+        rest.extend(ack_mac(&second, &[7; 32]));
+        socket.write_all(&rest).await.unwrap();
+        queue
+            .push(Arc::new(vec![3; MAX_FRAME_BYTES - 256]))
+            .unwrap();
+        let third = read_frame(&mut socket).await;
+        assert_eq!(third.sequence, 3);
+        socket.write_all(&ack_mac(&third, &[7; 32])).await.unwrap();
+        queue.close();
+        let _ = task.await;
+    })
+    .await
+    .expect("partial I/O lost progress during window refill");
+}

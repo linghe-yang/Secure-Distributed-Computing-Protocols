@@ -55,6 +55,8 @@ impl Context {
     ///   同一会话内不得把已用 InstanceId 重新用于另一份 bulk。
     /// 恢复输出的 ValidatedFile 支持 open_source/open_range；保留该共享句柄
     /// 可在无需网络的情况下生成上层证据，数据访问使用 as_ref() 避免复制。
+    /// Retrieve 按收到的条带增量恢复；全部条带及补零验证通过后才输出 File。
+    /// 单条带已构成公开错误证据时可以提前输出 Invalid；Stored 仍须完整验包。
     pub fn spawn(
         config: Node,
         input: Receiver<Request>,

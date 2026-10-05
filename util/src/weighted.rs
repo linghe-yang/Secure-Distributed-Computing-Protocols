@@ -25,6 +25,8 @@ pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_INSTANCES: usize = 1024;
 #[path = "weighted_queue.rs"]
 mod queue;
+#[path = "weighted_sender.rs"]
+mod sender;
 const WINDOW_FRAMES: usize = 32;
 const WINDOW_BYTES: usize = 1024 * 1024;
 
@@ -249,104 +251,19 @@ impl<T: Clone + Debug + Serialize + DeserializeOwned + Send + Sync + 'static> En
             let key = config.sk_map[&peer].clone();
             let addr: SocketAddr = config.net_map[&peer].parse()?;
             tasks.push(tokio::spawn(async move {
-                let mut sequence = 0u64;
-                let mut connection = None;
-                loop {
-                    let first = match queue.pop().await {
-                        Ok(m) => m,
-                        Err(e) => {
-                            log::error!("weighted queue: {}", e);
-                            break;
-                        }
-                    };
-                    let mut messages = vec![first];
-                    let mut bytes = messages[0].len();
-                    while messages.len() < WINDOW_FRAMES && bytes < WINDOW_BYTES {
-                        match queue.try_pop() {
-                            Ok(Some(m)) => {
-                                bytes += m.len();
-                                messages.push(m);
-                            }
-                            Ok(None) => break,
-                            Err(e) => {
-                                log::error!("weighted queue: {}", e);
-                                return;
-                            }
-                        }
-                    }
-                    if peer == id {
-                        for message in messages {
-                            let message = match decode::<T>(&message) {
-                                Ok(m) => m,
-                                Err(_) => return,
-                            };
-                            if tx.send((id, message)).await.is_err() {
-                                return;
-                            }
-                        }
-                        continue;
-                    }
-                    let mut packet = Vec::with_capacity(bytes + messages.len() * 128);
-                    let mut acks = Vec::with_capacity(messages.len());
-                    for message in messages {
-                        sequence = match sequence.checked_add(1) {
-                            Some(s) => s,
-                            None => return,
+                if peer == id {
+                    // Local delivery still follows this peer's FIFO and backpressure.
+                    while let Ok(message) = queue.pop().await {
+                        let Ok(message) = decode::<T>(&message) else {
+                            return;
                         };
-                        let prefix = bincode::serialize(&(
-                            "weighted/frame/v1",
-                            context,
-                            id,
-                            peer,
-                            sequence,
-                            message.len() as u64,
-                        ))
-                        .expect("frame prefix");
-                        let mac = mac_parts(&[&prefix, &message], &key);
-                        match encode_packet(context, id, peer, sequence, &message, mac) {
-                            Ok(p) => packet.extend(p),
-                            Err(e) => {
-                                log::error!("weighted encoding: {}", e);
-                                return;
-                            }
+                        if tx.send((id, message)).await.is_err() {
+                            return;
                         }
-                        acks.push(
-                            serialized_mac(&("weighted/ack/v1", context, id, peer, sequence), &key)
-                                .expect("ACK MAC"),
-                        );
                     }
-                    let mut retries = 0u64;
-                    loop {
-                        let result = tokio::time::timeout(Duration::from_secs(5), async {
-                            if connection.is_none() {
-                                connection = Some(low_latency(TcpStream::connect(addr).await?)?);
-                            }
-                            let socket = connection.as_mut().unwrap();
-                            // Replaying the whole bounded window is safe: receiver ACKs duplicates.
-                            socket.write_all(&packet).await?;
-                            for expected in &acks {
-                                let mut ack = [0; 32];
-                                socket.read_exact(&mut ack).await?;
-                                if &ack != expected {
-                                    return Err(std::io::Error::new(
-                                        std::io::ErrorKind::InvalidData,
-                                        "invalid ACK",
-                                    ));
-                                }
-                            }
-                            Ok::<_, std::io::Error>(())
-                        })
-                        .await;
-                        if matches!(result, Ok(Ok(()))) {
-                            break;
-                        }
-                        retries = retries.wrapping_add(1);
-                        if retries % 100 == 0 {
-                            log::debug!("weighted retry peer {}", peer);
-                        }
-                        connection = None;
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                    }
+                } else if let Err(e) = sender::send_peer(queue, addr, context, id, peer, key).await
+                {
+                    log::error!("weighted sender peer {}: {}", peer, e);
                 }
             }));
         }

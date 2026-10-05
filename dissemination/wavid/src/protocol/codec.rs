@@ -357,14 +357,89 @@ impl Codec {
             rows,
         })
     }
-    pub fn bundle_bytes(&self, owner: Replica) -> usize {
+    pub(crate) fn directory_bytes(&self) -> usize {
+        1 + 8 + 32 * self.q + 8
+    }
+    pub(crate) fn stripe_bytes(&self, owner: Replica) -> usize {
         let frontier = range_frontier(self.m, self.positions[owner].start, self.counts[owner])
             .unwrap()
             .len();
-        1 + 8
-            + 32 * self.q
-            + 8
-            + self.q * (8 + self.parameters.block_bytes * self.counts[owner] + 8 + 32 * frontier)
+        8 + self.parameters.block_bytes * self.counts[owner] + 8 + 32 * frontier
+    }
+    pub fn bundle_bytes(&self, owner: Replica) -> usize {
+        self.directory_bytes() + self.q * self.stripe_bytes(owner)
+    }
+    /// Decode only the fixed v3 prefix. Geometry comes from registration, never
+    /// from an untrusted length prefix. The caller authenticates the directory root.
+    pub(crate) fn decode_directory(&self, raw: &[u8]) -> Option<Vec<Hash>> {
+        if raw.len() != self.directory_bytes()
+            || raw[0] != 3
+            || u64::from_le_bytes(raw[1..9].try_into().ok()?) != self.q as u64
+            || u64::from_le_bytes(raw[raw.len() - 8..].try_into().ok()?) != self.q as u64
+        {
+            return None;
+        }
+        Some(
+            raw[9..raw.len() - 8]
+                .chunks_exact(32)
+                .map(|b| b.try_into().unwrap())
+                .collect(),
+        )
+    }
+    pub(crate) fn decode_stripe_packet(
+        &self,
+        owner: Replica,
+        z: usize,
+        raw: &[u8],
+        root: Hash,
+    ) -> Option<Vec<StoredFragment>> {
+        if owner >= self.k || z >= self.q || raw.len() != self.stripe_bytes(owner) {
+            return None;
+        }
+        let stripe: PackedStripe = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .with_limit(raw.len() as u64)
+            .reject_trailing_bytes()
+            .deserialize(raw)
+            .ok()?;
+        self.verify_packed_stripe(owner, z, stripe, root)
+    }
+    fn verify_packed_stripe(
+        &self,
+        owner: Replica,
+        z: usize,
+        stripe: PackedStripe,
+        root: Hash,
+    ) -> Option<Vec<StoredFragment>> {
+        if stripe.data.len() != self.counts[owner] * self.parameters.block_bytes {
+            return None;
+        }
+        let blocks: Vec<_> = stripe
+            .data
+            .chunks_exact(self.parameters.block_bytes)
+            .collect();
+        let proof = Arc::new(verify_range(
+            self.stripe_context(z),
+            root,
+            self.m,
+            self.positions[owner].start,
+            &blocks,
+            &stripe.siblings,
+        )?);
+        let data = Arc::new(stripe.data);
+        Some(
+            self.positions[owner]
+                .clone()
+                .enumerate()
+                .map(|(j, index)| StoredFragment {
+                    index,
+                    data: data.clone(),
+                    offset: j * self.parameters.block_bytes,
+                    block_bytes: self.parameters.block_bytes,
+                    proof: proof.clone(),
+                })
+                .collect(),
+        )
     }
     /// Versioned compact wire representation; public single-block openings remain available.
     pub fn encode_bundle(&self, owner: Replica, bundle: &Bundle) -> Result<Vec<u8>> {
@@ -465,36 +540,9 @@ impl Codec {
         }
         let mut stripes = Vec::with_capacity(if retain { self.q } else { 0 });
         for (z, stripe) in packed.stripes.into_iter().enumerate() {
-            if stripe.data.len() != self.counts[owner] * self.parameters.block_bytes {
-                return None;
-            }
-            let blocks: Vec<_> = stripe
-                .data
-                .chunks_exact(self.parameters.block_bytes)
-                .collect();
-            let proof = Arc::new(verify_range(
-                self.stripe_context(z),
-                packed.directory[z],
-                self.m,
-                self.positions[owner].start,
-                &blocks,
-                &stripe.siblings,
-            )?);
+            let fragments = self.verify_packed_stripe(owner, z, stripe, packed.directory[z])?;
             if retain {
-                let data = Arc::new(stripe.data);
-                stripes.push(
-                    self.positions[owner]
-                        .clone()
-                        .enumerate()
-                        .map(|(j, index)| StoredFragment {
-                            index,
-                            data: data.clone(),
-                            offset: j * self.parameters.block_bytes,
-                            block_bytes: self.parameters.block_bytes,
-                            proof: proof.clone(),
-                        })
-                        .collect(),
-                );
+                stripes.push(fragments);
             }
         }
         Some(VerifiedBundle {
@@ -667,115 +715,90 @@ impl Codec {
         directory: &[Hash],
         rows: &[BTreeMap<usize, Fragment>],
     ) -> Result<Option<Retrieval>> {
-        self.recover_inner(root, directory, rows, false)
-    }
-    pub(crate) fn recover_verified(
-        &self,
-        root: Hash,
-        directory: &[Hash],
-        rows: &mut [BTreeMap<usize, StoredFragment>],
-    ) -> Result<Option<Retrieval>> {
         if rows.len() != self.q || rows.iter().any(|r| r.len() < self.k) {
             return Ok(None);
         }
-        // Keep each stripe's original evidence until checked, then release it.
-        self.recover_stripes(
-            root,
-            directory,
-            |z| {
-                std::mem::take(&mut rows[z])
-                    .into_values()
-                    .take(self.k)
-                    .collect()
-            },
-            true,
-        )
-    }
-    fn recover_inner<F: Coordinate + Clone>(
-        &self,
-        root: Hash,
-        directory: &[Hash],
-        rows: &[BTreeMap<usize, F>],
-        verified: bool,
-    ) -> Result<Option<Retrieval>> {
-        if rows.len() != self.q || rows.iter().any(|r| r.len() < self.k) {
-            return Ok(None);
-        }
-        self.recover_stripes(
-            root,
-            directory,
-            |z| rows[z].values().take(self.k).cloned().collect(),
-            verified,
-        )
-    }
-    fn recover_stripes<F: Coordinate>(
-        &self,
-        root: Hash,
-        directory: &[Hash],
-        mut stripe: impl FnMut(usize) -> Vec<F>,
-        verified: bool,
-    ) -> Result<Option<Retrieval>> {
         ensure!(directory.len() == self.q, "directory size");
         let tree = IndexedTree::new(self.directory_context, directory);
         ensure!(tree.root() == root, "directory commitment");
         let mut data = Vec::with_capacity(self.file_bytes);
         for z in 0..self.q {
-            let fragments = stripe(z);
-            ensure!(
-                verified
-                    || fragments.iter().all(|f| verify(
-                        self.stripe_context(z),
-                        directory[z],
-                        self.m,
-                        f.index(),
-                        f.data(),
-                        &f.export().proof
-                    )),
-                "unauthenticated recovery coordinate"
-            );
-            let decoded = self.decode_stripe(&fragments)?;
-            let encoded_tree = self.stripe_tree(z, &decoded);
-            if encoded_tree.root() != directory[z] {
-                return Ok(Some(Retrieval::Invalid(StorageFault::Coding(
-                    StripeWitness {
-                        stripe: z,
-                        root: directory[z],
-                        directory_proof: tree.proof(z),
-                        fragments: fragments.iter().map(Coordinate::export).collect(),
-                    },
-                ))));
-            }
-            for (index, block) in decoded
-                .chunks_exact(self.parameters.block_bytes)
-                .take(self.k)
-                .enumerate()
-            {
-                if block.iter().enumerate().any(|(offset, b)| {
-                    (z * self.k + index) * self.parameters.block_bytes + offset >= self.file_bytes
-                        && *b != 0
-                }) {
-                    return Ok(Some(Retrieval::Invalid(StorageFault::Padding(
-                        SourceOpening {
-                            stripe: z,
-                            root: directory[z],
-                            directory_proof: tree.proof(z),
-                            fragment: Fragment {
-                                index,
-                                data: block.to_vec(),
-                                proof: encoded_tree.proof(index),
-                            },
-                        },
-                    ))));
-                }
-                let remaining = self.file_bytes.saturating_sub(data.len());
-                data.extend_from_slice(&block[..block.len().min(remaining)]);
+            let fragments: Vec<_> = rows[z].values().take(self.k).cloned().collect();
+            match self.check_stripe(z, directory[z], &tree, &fragments, false)? {
+                Ok(bytes) => data.extend(bytes),
+                Err(fault) => return Ok(Some(Retrieval::Invalid(fault))),
             }
         }
-        data.truncate(self.file_bytes);
         Ok(Some(Retrieval::File(ValidatedFile::from_verified(
             self.clone(),
             data,
             tree,
         ))))
+    }
+    /// Only internally authenticated coordinates may skip repeated path checking.
+    pub(crate) fn recover_verified_stripe(
+        &self,
+        z: usize,
+        root: Hash,
+        directory: &IndexedTree,
+        fragments: &[StoredFragment],
+    ) -> Result<Result<Vec<u8>, StorageFault>> {
+        self.check_stripe(z, root, directory, fragments, true)
+    }
+    fn check_stripe<F: Coordinate>(
+        &self,
+        z: usize,
+        root: Hash,
+        directory: &IndexedTree,
+        fragments: &[F],
+        verified: bool,
+    ) -> Result<Result<Vec<u8>, StorageFault>> {
+        ensure!(
+            verified
+                || fragments.iter().all(|f| verify(
+                    self.stripe_context(z),
+                    root,
+                    self.m,
+                    f.index(),
+                    f.data(),
+                    &f.export().proof
+                )),
+            "unauthenticated recovery coordinate"
+        );
+        let mut decoded = self.decode_stripe(fragments)?;
+        let encoded_tree = self.stripe_tree(z, &decoded);
+        if encoded_tree.root() != root {
+            return Ok(Err(StorageFault::Coding(StripeWitness {
+                stripe: z,
+                root,
+                directory_proof: directory.proof(z),
+                // These are the received paths, not paths in the different candidate tree.
+                fragments: fragments.iter().map(Coordinate::export).collect(),
+            })));
+        }
+        for (index, block) in decoded
+            .chunks_exact(self.parameters.block_bytes)
+            .take(self.k)
+            .enumerate()
+        {
+            if block.iter().enumerate().any(|(offset, b)| {
+                (z * self.k + index) * self.parameters.block_bytes + offset >= self.file_bytes
+                    && *b != 0
+            }) {
+                return Ok(Err(StorageFault::Padding(SourceOpening {
+                    stripe: z,
+                    root,
+                    directory_proof: directory.proof(z),
+                    fragment: Fragment {
+                        index,
+                        data: block.to_vec(),
+                        proof: encoded_tree.proof(index),
+                    },
+                })));
+            }
+        }
+        let source_bytes = self.k * self.parameters.block_bytes;
+        decoded.truncate(source_bytes.min(self.file_bytes.saturating_sub(z * source_bytes)));
+        Ok(Ok(decoded))
     }
 }

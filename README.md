@@ -383,10 +383,12 @@ Review that exclusive bound against the intended corruption model before deploym
 ### Weighted transport and storage optimization
 
 Weighted endpoints enable TCP_NODELAY on both accepted and outgoing sockets, including
-reconnects, and coalesce frame lengths and bodies. A peer sends at most 32 frames per
-window (1 MiB payload target, less than 2 MiB with the last frame), then checks every
-authenticated ACK. Reconnection replays the same window and receiver sequence checks
-suppress duplicate delivery. The transport envelope and MAC bytes remain compatible.
+reconnects, and coalesce frame lengths and bodies. Each peer has a continuously refilled window
+of at most 32 unacknowledged frames (1 MiB payload target, less than 2 MiB with the
+last frame). Every complete authenticated ACK frees a slot immediately; the sender
+does not wait for the rest of a batch. Reads and vectored writes progress together,
+retaining partial frame/ACK offsets across queue wakeups. Reconnection replays only
+unacknowledged frames, with unchanged sequences/MACs; receiver checks suppress duplicates. The transport envelope and MAC bytes remain compatible.
 Receiver sequencing locks are per sender; a backpressured sender holds no global lock.
 
 Each peer queue retains at most 2 MiB / 1024 messages in RAM, in addition to its bounded
@@ -489,8 +491,10 @@ remain the upper layer's responsibility.
 Received multiproofs retain shared authenticated nodes and flat block buffers.
 Paths are materialized only for explicit exports or public fault certificates.
 Storage-only verification releases temporary proof nodes after each stripe.
-Recovery selects at most k coordinates per stripe and frees its evidence after
-decoding, full re-encoding/root comparison, and padding validation. A failed
+Recovery parses the authenticated directory first, then consumes complete stripe
+records as chunks arrive. It selects at most k coordinates per stripe and immediately
+decodes, re-encodes/checks the root, checks padding, and frees that stripe's evidence.
+It does not wait for a complete owner packet or for all other stripes. A failed
 stripe exports its original received paths, never paths from a different root.
 Successful files regenerate proofs from their source bytes and directory.
 Holder packets and authorized late-service obligations remain after local output.
@@ -498,8 +502,8 @@ Holder packets and authorized late-service obligations remain after local output
 Preparation writes each encoded stripe into final owner packet buffers, avoiding
 a second full set of bundle objects and per-block wire lengths. These changes
 reduce copies and proof retention; they do **not** make overall WAVID RAM
-independent of file size. Source/output data, owner packets, incoming assemblies,
-and concurrent instances still occupy RAM. Only the existing transport overflow
+independent of file size. Source/output data, dealer owner packets, full INIT
+assemblies, out-of-order DATA chunks, and concurrent instances still occupy RAM. Only the existing transport overflow
 queue uses disk.
 
 **Migration:** add `coding: Default::default()` to WAVID Descriptor and WRBC
@@ -525,3 +529,37 @@ The shared-range regression retains 131 hashes for 64 adjacent coordinates in a
 entries; this is not a whole-process RSS measurement). File-handle clone tests
 check that the underlying source allocation is shared. Encoding scratch space
 uses contiguous stripes, avoiding one heap allocation per coding coordinate.
+
+### Incremental retrieval and continuously refilled transport windows
+
+These optimizations retain the v3 owner packet, coding context, SHA-256 commitments,
+and public certificate representation. Existing v3 roots and packets remain valid;
+there are no new public parameters. The regular WAVID and embedded WRBC paths both
+use incremental retrieval. Other weighted services use the new transport window.
+
+A retriever waits for and authenticates the directory prefix, then verifies each
+available stripe record independently. Records may cross the fixed 32 KiB chunk
+boundaries, and chunks may arrive out of order or be replayed. Consumed chunks are
+released. Once k distinct authenticated coordinates for a stripe arrive, it is
+reconstructed and checked immediately; no incomplete file is exposed. File delivery
+requires every stripe and all padding checks. A provable coding or padding fault can
+be emitted as soon as its stripe is checked, using the original authenticated paths.
+Malformed/missing packet bytes or invalid Merkle paths alone never produce a public
+fault. A bad sender's suffix cannot invalidate previously authenticated coordinates.
+
+Dispersal/INIT storage acknowledgments still require the full verified holder packet;
+this change does not issue early storage receipts. Holders retain their packet after
+local output to serve late authorized requests. Incremental retrieval is not disk
+storage and does not make total RAM independent of file size.
+
+Transport tests hold ACKs 2..32 while confirming that ACK 1 alone permits frame 33;
+they also check partial ACKs competing with new writes, bounded windows, silent peers,
+and reconnection replay starting at the first unacknowledged frame. Retrieval tests
+check early stripe recovery before any full owner packet, consumed-chunk release,
+reordered/replayed chunks, multi-chunk directories, invalid suffixes, original coding
+fault paths, final padding faults, GF8/GF16, and empty files. Run both existing matrices:
+
+```bash
+bash scripts/test_weighted_proofs.sh
+bash scripts/test_weighted_optimized.sh
+```
